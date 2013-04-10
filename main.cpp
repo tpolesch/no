@@ -772,13 +772,12 @@ int main(int argc, char * argv[])
     }
 
     ActiveWaves activeWaves;
+    activeWaves.AddFileList(arguments.Files());
 
     if (arguments.IsTestSignal())
     {
         activeWaves.AddTestSignal();
     }
-
-    activeWaves.AddFileList(arguments.Files());
 
     MainWindow window;
     window.SetActiveWaves(activeWaves);
