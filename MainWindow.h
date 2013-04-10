@@ -7,27 +7,33 @@ class QScrollArea;
 class QAction;
 class QMenu;
 class WaveView;
-class WaveList;
+class ActiveWaves;
 
 class MainWindow : public QObject
 {
     Q_OBJECT
 public:
     MainWindow();
-    void init(const WaveList & list);
+    void Init(const ActiveWaves & list);
 private:
-    void updateActions();
-    void updateView();
+    void UpdateActions();
+    void UpdateView();
 
-    QMainWindow mainWindow;
-    QScrollArea * scrollArea;
-    WaveView * waveView; 
-    QAction * zoomInAction;
-    QAction * zoomOutAction;
-    QMenu * viewMenu;
+    QMainWindow mMainWindow;
+    QScrollArea * mScrollAreaPtr;
+    WaveView * mWaveViewPtr; 
+    QAction * mXZoomInActionPtr;
+    QAction * mXZoomOutActionPtr;
+    QAction * mYZoomInActionPtr;
+    QAction * mYZoomOutActionPtr;
+    QAction * mZoomResetActionPtr;
+    QMenu * mViewMenuPtr;
 private slots:
-    void zoomIn();
-    void zoomOut();
+    void XZoomIn();
+    void XZoomOut();
+    void YZoomIn();
+    void YZoomOut();
+    void ResetZoom();
 };
 
 #endif
