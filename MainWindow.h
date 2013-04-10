@@ -15,6 +15,7 @@ class MainWindow : public QObject
 public:
     MainWindow();
     void SetActiveWaves(ActiveWaves & list);
+    void SetMarkSamples(bool isMark);
 private:
     void UpdateActions();
     void UpdateView();

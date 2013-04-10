@@ -13,18 +13,18 @@ public:
     void BuildTestSignal();
     void BuildFromFile(const QString & name);
 
-    typedef QList<unsigned int> SampleType;
-    const SampleType & Samples() const {return mSamples;}
+    typedef QList<unsigned int> SampleList;
+    const SampleList & Samples() const {return mSamples;}
     unsigned int SampleMask() const {return 0x3fffu;}
     int SampleOffset() const {return 0x2000;}
     int SamplesPerSecond() const {return 500;}
     int MilliMeterPerSecond() const {return 25;} // mm/s
     int MilliMeterPerMilliVolt() const {return 10;} // mm/mV
     int LsbPerMilliVolt() const {return 200;} // LSB/mV
-    bool IsValid() const {return (error == 0);}
+    bool IsValid() const {return (mErrorCount == 0);}
 private:
-    SampleType mSamples;
-    int error;
+    SampleList mSamples;
+    int mErrorCount;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -33,14 +33,14 @@ class ActiveWaves
 {
 public:
     ActiveWaves();
-    void Init(const QStringList & args);
-    void AddTestSignal();
+    void AddFileList(const QStringList & args);
     void AddFile(const QString & fileName);
+    void AddTestSignal();
 
-    typedef QList<SingleWave> ListType;
-    const ListType & List() const {return mList;}
+    typedef QList<SingleWave> WaveList;
+    const WaveList & Waves() const {return mWaves;}
 private:
-    ListType mList;
+    WaveList mWaves;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -114,7 +114,7 @@ public:
 protected:
     void paintEvent(QPaintEvent *);
 private:
-    const ActiveWaves::ListType & Waves() const;
+    const ActiveWaves::WaveList & Waves() const;
     void InitSize();
     void RebuildView();
     PixelScaling ZoomScaling() const;
@@ -126,18 +126,40 @@ private:
     bool mIsMarkSamples;
 };
 
+class ArgumentParser
+{
+public:
+    ArgumentParser();
+    void ParseList(QStringList list);
+    void PrintUsage();
+    bool IsInvalid() const {return mIsInvalid;}
+    bool IsTestSignal() const {return mIsTestSignal;}
+    bool IsMarkSamples() const {return mIsMarkSamples;}
+    bool IsShowHelp() const {return mIsShowHelp;}
+    const QStringList & Files() const {return mFiles;}
+private:
+    void ParseLine(const QString & line);
+    bool mIsInvalid;
+    bool mIsTestSignal;
+    bool mIsMarkSamples;
+    bool mIsShowHelp;
+    QString mApplication;
+    QStringList mFiles;
+};
+    
 ////////////////////////////////////////////////////////////////////////////////
 // class SingleWave
 ////////////////////////////////////////////////////////////////////////////////
 
 SingleWave::SingleWave():
     mSamples(),
-    error(0)
+    mErrorCount(0)
 {
 }
 
 void SingleWave::BuildTestSignal()
 {
+    qDebug("SingleWave::BuildTestSignal()");
     const int sampleCount = 10 * SamplesPerSecond();
     int value = LsbPerMilliVolt();
 
@@ -160,7 +182,7 @@ void SingleWave::BuildFromFile(const QString & name)
     if (!file.open(QIODevice::ReadOnly))
     {
         qDebug("... failed");
-        ++error;
+        ++mErrorCount;
         return;
     }
 
@@ -184,7 +206,7 @@ void SingleWave::BuildFromFile(const QString & name)
 ////////////////////////////////////////////////////////////////////////////////
 
 ActiveWaves::ActiveWaves():
-    mList()
+    mWaves()
 {
 }
 
@@ -192,7 +214,7 @@ void ActiveWaves::AddTestSignal()
 {
     SingleWave wave;
     wave.BuildTestSignal();
-    mList.append(wave);
+    mWaves.append(wave);
 }
 
 void ActiveWaves::AddFile(const QString & fileName)
@@ -202,15 +224,15 @@ void ActiveWaves::AddFile(const QString & fileName)
 
     if (wave.IsValid())
     {
-        mList.append(wave);
+        mWaves.append(wave);
     }
 }
 
-void ActiveWaves::Init(const QStringList & args)
+void ActiveWaves::AddFileList(const QStringList & list)
 {
-    for (int index = 1; index < args.count(); ++index)
+    for (int index = 0; index < list.count(); ++index)
     {
-        AddFile(args[index]);
+        AddFile(list[index]);
     }
 }
 
@@ -438,9 +460,9 @@ void WaveView::SetActiveWaves(ActiveWaves & arg)
     InitSize();
 }
 
-const ActiveWaves::ListType & WaveView::Waves() const
+const ActiveWaves::WaveList & WaveView::Waves() const
 {
-    return mActiveWavesPtr->List();
+    return mActiveWavesPtr->Waves();
 }
 
 void WaveView::InitSize()
@@ -610,9 +632,14 @@ void MainWindow::YZoomOut()
     UpdateActions();
 }
 
+void MainWindow::SetMarkSamples(bool isMark)
+{
+    mWaveViewPtr->SetMarkSamples(isMark);
+}
+
 void MainWindow::MarkSamples()
 {
-    mWaveViewPtr->SetMarkSamples(mMarkSamplesActionPtr->isChecked());
+    SetMarkSamples(mMarkSamplesActionPtr->isChecked());
     UpdateActions();
 }
 
@@ -651,26 +678,111 @@ void MainWindow::UpdateActions()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// class ArgumentParser
+////////////////////////////////////////////////////////////////////////////////
+
+ArgumentParser::ArgumentParser():
+    mIsInvalid(false),
+    mIsTestSignal(false),
+    mIsMarkSamples(false),
+    mIsShowHelp(false),
+    mFiles()
+{
+}
+
+void ArgumentParser::ParseList(QStringList list)
+{
+    if (list.count() > 0)
+    {
+        mApplication = list[0];
+    }
+
+    for (int index = 1; index < list.count(); ++index)
+    {
+        ParseLine(list[index]);
+    }
+}
+
+void ArgumentParser::ParseLine(const QString & line)
+{
+    if ((line == QString("-t")) || (line == QString("--test")))
+    {
+        mIsTestSignal = true;
+        return;
+    }
+
+    if ((line == QString("-m")) || (line == QString("--mark")))
+    {
+        mIsMarkSamples = true;
+        return;
+    }
+
+    if ((line == QString("-h")) || (line == QString("--help")))
+    {
+        mIsShowHelp = true;
+        return;
+    }
+
+    const QRegExp longOption("--(\\w+)");
+
+    if (longOption.exactMatch(line))
+    {
+        qDebug() << "Unknown option: " << longOption.cap(0);
+        mIsInvalid = true;
+        return;
+    }
+
+    const QRegExp shortOption("-(\\w)");
+
+    if (shortOption.exactMatch(line))
+    {
+        qDebug() << "Unknown option: " << shortOption.cap(0);
+        mIsInvalid = true;
+        return;
+    }
+
+    // assume filename argument
+    mFiles.append(line);
+}
+
+void ArgumentParser::PrintUsage()
+{
+    qDebug("Usage:");
+    qDebug("  %s [options] [file1 file2 ...]", qPrintable(mApplication));
+    qDebug("Options:");
+    qDebug("  -t --test ... add test signal");
+    qDebug("  -m --mark ... mark samples");
+    qDebug("  -h --help ... show help");
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // main()
 ////////////////////////////////////////////////////////////////////////////////
 
 int main(int argc, char * argv[])
 {
     QApplication app(argc, argv);
-    QStringList args = app.arguments();
+    ArgumentParser arguments;
+    arguments.ParseList(app.arguments());
 
-    if (args.count() < 2)
+    if (arguments.IsShowHelp() || arguments.IsInvalid())
     {
-        qDebug("Usage: %s file1 [file2 ...]", qPrintable(args[0]));
+        arguments.PrintUsage();
         return 0;
     }
 
     ActiveWaves activeWaves;
-    // activeWaves.AddTestSignal();
-    activeWaves.Init(args);
+
+    if (arguments.IsTestSignal())
+    {
+        activeWaves.AddTestSignal();
+    }
+
+    activeWaves.AddFileList(arguments.Files());
 
     MainWindow window;
     window.SetActiveWaves(activeWaves);
+    window.SetMarkSamples(arguments.IsMarkSamples());
     return app.exec();
 }
 
