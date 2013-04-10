@@ -1,0 +1,6 @@
+*.swp
+*.o
+moc_*.cpp
+no
+Makefile
+
