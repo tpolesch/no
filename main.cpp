@@ -33,8 +33,9 @@ class ActiveWaves
 {
 public:
     ActiveWaves();
-    void AddTestSignal();
     void Init(const QStringList & args);
+    void AddTestSignal();
+    void AddFile(const QString & fileName);
 
     typedef QList<SingleWave> ListType;
     const ListType & List() const {return mList;}
@@ -79,6 +80,7 @@ class DrawChannel
 {
 public:
     explicit DrawChannel(const SingleWave & wave, const PixelScaling & scaling);
+    void SetMarkSamples(bool isMark) {mIsMarkSamples = isMark;}
     void Draw(QWidget & parent, int offset);
     int MinimumWidth() const;
 private:
@@ -92,6 +94,7 @@ private:
     const SingleWave * mWavePtr;
     int mSamplePosition;
     int mChannelOffset;
+    bool mIsMarkSamples;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -105,19 +108,22 @@ public:
     void YZoomIn();
     void YZoomOut();
     void ResetZoom();
-    void Init(const ActiveWaves & arg);
+    void SetMarkSamples(bool isMarked);
+    void SetActiveWaves(ActiveWaves & arg);
+    void OpenFile(const QString & fileName);
 protected:
     void paintEvent(QPaintEvent *);
 private:
     const ActiveWaves::ListType & Waves() const;
     void InitSize();
-    void BuildZoom();
+    void RebuildView();
     PixelScaling ZoomScaling() const;
     PixelScaling StandardScaling() const;
 
-    const ActiveWaves * mActiveWavesPtr;
+    ActiveWaves * mActiveWavesPtr;
     int mXZoomValue;
     int mYZoomValue;
+    bool mIsMarkSamples;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -189,17 +195,22 @@ void ActiveWaves::AddTestSignal()
     mList.append(wave);
 }
 
+void ActiveWaves::AddFile(const QString & fileName)
+{
+    SingleWave wave;
+    wave.BuildFromFile(fileName);
+
+    if (wave.IsValid())
+    {
+        mList.append(wave);
+    }
+}
+
 void ActiveWaves::Init(const QStringList & args)
 {
     for (int index = 1; index < args.count(); ++index)
     {
-        SingleWave wave;
-        wave.BuildFromFile(args[index]);
-
-        if (wave.IsValid())
-        {
-            mList.append(wave);
-        }
+        AddFile(args[index]);
     }
 }
 
@@ -299,7 +310,8 @@ DrawChannel::DrawChannel(const SingleWave & wave, const PixelScaling & scaling):
     mScalingPtr(&scaling),
     mWavePtr(&wave),
     mSamplePosition(0),
-    mChannelOffset(0)
+    mChannelOffset(0),
+    mIsMarkSamples(false)
 {
 }
 
@@ -310,9 +322,17 @@ int DrawChannel::MinimumWidth() const
 
 void DrawChannel::Draw(QWidget & parent, int offset)
 {
-    QPainter samplePainter(&parent);
-    samplePainter.setRenderHint(QPainter::Antialiasing, true);
-    samplePainter.setPen(QPen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    QPen linePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    QPen pointPen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+
+    if (mIsMarkSamples)
+    {
+        pointPen.setWidth(3);
+        linePen.setColor(Qt::gray);
+    }
+
+    QPainter painter(&parent);
+    painter.setRenderHint(QPainter::Antialiasing, true);
 
     mSamplePosition = 0;
     mChannelOffset = offset;
@@ -321,7 +341,10 @@ void DrawChannel::Draw(QWidget & parent, int offset)
     while (IsReading())
     {
         const QPoint to = CurrentPoint();
-        samplePainter.drawLine(from, to);
+        painter.setPen(linePen);
+        painter.drawLine(from, to);
+        painter.setPen(pointPen);
+        painter.drawPoint(from);
         from = to;
     }
 }
@@ -361,42 +384,55 @@ WaveView::WaveView():
     QWidget(),
     mActiveWavesPtr(NULL),
     mXZoomValue(0),
-    mYZoomValue(0)
+    mYZoomValue(0),
+    mIsMarkSamples(false)
 {
 }
 
 void WaveView::XZoomIn()
 {
     ++mXZoomValue;
-    BuildZoom();
+    RebuildView();
 }
 
 void WaveView::XZoomOut()
 {
     --mXZoomValue;
-    BuildZoom();
+    RebuildView();
 }
 
 void WaveView::YZoomIn()
 {
     ++mYZoomValue;
-    BuildZoom();
+    RebuildView();
 }
 
 void WaveView::YZoomOut()
 {
     --mYZoomValue;
-    BuildZoom();
+    RebuildView();
 }
 
 void WaveView::ResetZoom()
 {
     mXZoomValue = 0;
     mYZoomValue = 0;
-    BuildZoom();
+    RebuildView();
 }
 
-void WaveView::Init(const ActiveWaves & arg)
+void WaveView::SetMarkSamples(bool isMarked)
+{
+    mIsMarkSamples = isMarked;
+    update();
+}
+
+void WaveView::OpenFile(const QString & fileName)
+{
+    mActiveWavesPtr->AddFile(fileName);
+    RebuildView();
+}
+
+void WaveView::SetActiveWaves(ActiveWaves & arg)
 {
     mActiveWavesPtr = &arg;
     InitSize();
@@ -430,7 +466,7 @@ void WaveView::InitSize()
     qDebug("WaveView::InitSize() width = %d", width);
 }
 
-void WaveView::BuildZoom()
+void WaveView::RebuildView()
 {
     InitSize();
     update();
@@ -448,6 +484,7 @@ void WaveView::paintEvent(QPaintEvent *)
     {
         DrawChannel channel(Waves()[index], ZoomScaling());
         const int channelOffset = (index * channelHeight) + (channelHeight / 2);
+        channel.SetMarkSamples(mIsMarkSamples);
         channel.Draw(*this, channelOffset);
     }
 }
@@ -508,6 +545,27 @@ MainWindow::MainWindow()
     mZoomResetActionPtr->setEnabled(false);
     connect(mZoomResetActionPtr, SIGNAL(triggered()), this, SLOT(ResetZoom()));
 
+    mMarkSamplesActionPtr = new QAction(QString("Mark &Samples"), this);
+    mMarkSamplesActionPtr->setShortcut(QKeySequence(Qt::Key_S));
+    mMarkSamplesActionPtr->setEnabled(true);
+    mMarkSamplesActionPtr->setChecked(false);
+    mMarkSamplesActionPtr->setCheckable(true);
+    connect(mMarkSamplesActionPtr, SIGNAL(triggered()), this, SLOT(MarkSamples()));
+
+    mOpenActionPtr = new QAction(tr("&Open..."), this);
+    mOpenActionPtr->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_O));
+    mOpenActionPtr->setEnabled(true);
+    connect(mOpenActionPtr, SIGNAL(triggered()), this, SLOT(OpenFile()));
+
+    mExitActionPtr = new QAction(tr("E&xit"), this);
+    mExitActionPtr->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_Q));
+    mExitActionPtr->setEnabled(true);
+    connect(mExitActionPtr, SIGNAL(triggered()), this, SLOT(ExitApplication()));
+
+    mFileMenuPtr = new QMenu(QString("&File"), &mMainWindow);
+    mFileMenuPtr->addAction(mOpenActionPtr);
+    mFileMenuPtr->addAction(mExitActionPtr);
+
     mViewMenuPtr = new QMenu(QString("&View"), &mMainWindow);
     mViewMenuPtr->addAction(mXZoomInActionPtr);
     mViewMenuPtr->addAction(mXZoomOutActionPtr);
@@ -515,50 +573,68 @@ MainWindow::MainWindow()
     mViewMenuPtr->addAction(mYZoomOutActionPtr);
     mViewMenuPtr->addAction(mZoomResetActionPtr);
     mViewMenuPtr->addSeparator();
+    mViewMenuPtr->addAction(mMarkSamplesActionPtr);
 
+    mMainWindow.menuBar()->addMenu(mFileMenuPtr);
     mMainWindow.menuBar()->addMenu(mViewMenuPtr);
 }
 
-void MainWindow::Init(const ActiveWaves & list)
+void MainWindow::SetActiveWaves(ActiveWaves & list)
 {
-    mWaveViewPtr->Init(list);
+    mWaveViewPtr->SetActiveWaves(list);
     UpdateActions();
     mMainWindow.show();
 }
 
 void MainWindow::XZoomIn()
 {
-    qDebug("MainWindow::XZoomIn()");
     mWaveViewPtr->XZoomIn();
     UpdateActions();
 }
 
 void MainWindow::XZoomOut()
 {
-    qDebug("MainWindow::XZoomOut()");
     mWaveViewPtr->XZoomOut();
     UpdateActions();
 }
 
 void MainWindow::YZoomIn()
 {
-    qDebug("MainWindow::YZoomIn()");
     mWaveViewPtr->YZoomIn();
     UpdateActions();
 }
 
 void MainWindow::YZoomOut()
 {
-    qDebug("MainWindow::YZoomOut()");
     mWaveViewPtr->YZoomOut();
+    UpdateActions();
+}
+
+void MainWindow::MarkSamples()
+{
+    mWaveViewPtr->SetMarkSamples(mMarkSamplesActionPtr->isChecked());
     UpdateActions();
 }
 
 void MainWindow::ResetZoom()
 {
-    qDebug("MainWindow::ResetZoom()");
     mWaveViewPtr->ResetZoom();
     UpdateActions();
+}
+
+void MainWindow::ExitApplication()
+{
+    mMainWindow.close();
+}
+
+void MainWindow::OpenFile()
+{
+    QString fileName = QFileDialog::getOpenFileName(&mMainWindow, QString("Open File"), QDir::currentPath());
+
+    if (!fileName.isEmpty())
+    {
+        mWaveViewPtr->OpenFile(fileName);
+    }
 }
 
 void MainWindow::UpdateView()
@@ -594,7 +670,7 @@ int main(int argc, char * argv[])
     activeWaves.Init(args);
 
     MainWindow window;
-    window.Init(activeWaves);
+    window.SetActiveWaves(activeWaves);
     return app.exec();
 }
 

@@ -14,7 +14,7 @@ class MainWindow : public QObject
     Q_OBJECT
 public:
     MainWindow();
-    void Init(const ActiveWaves & list);
+    void SetActiveWaves(ActiveWaves & list);
 private:
     void UpdateActions();
     void UpdateView();
@@ -27,6 +27,10 @@ private:
     QAction * mYZoomInActionPtr;
     QAction * mYZoomOutActionPtr;
     QAction * mZoomResetActionPtr;
+    QAction * mMarkSamplesActionPtr;
+    QAction * mOpenActionPtr;
+    QAction * mExitActionPtr;
+    QMenu * mFileMenuPtr;
     QMenu * mViewMenuPtr;
 private slots:
     void XZoomIn();
@@ -34,6 +38,9 @@ private slots:
     void YZoomIn();
     void YZoomOut();
     void ResetZoom();
+    void MarkSamples();
+    void OpenFile();
+    void ExitApplication();
 };
 
 #endif
