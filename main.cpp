@@ -251,14 +251,40 @@ PixelScaling::PixelScaling(int xzoom, int yzoom):
     mYpx = desk.height();
 }
 
+inline static bool UseDouble()
+{
+    return true;
+}
+
+inline static void DoubleZoom(double & value, int zoom)
+{
+    value = (zoom < 0)
+        ? (value / static_cast<double>(1 << (-zoom)))
+        : (value * static_cast<double>(1 << zoom));
+}
+
+inline static void IntZoom(qint64 & value, int zoom)
+{
+    value = (zoom < 0)
+        ? (value >> (-zoom))
+        : (value << zoom);
+}
+
 int PixelScaling::MilliMeterAsXPixel(int numerator, int denominator) const
 {
+    if (UseDouble())
+    {
+        double result = static_cast<double>(numerator);
+        result *= static_cast<double>(mXpx);
+        DoubleZoom(result, mXZoom);
+        result /= static_cast<double>(mXmm);
+        result /= static_cast<double>(denominator);
+        return static_cast<int>(result);
+    }
+
     qint64 result = numerator;
     result *= mXpx;
-
-    if (mXZoom > 0) {result <<= mXZoom;}
-    if (mXZoom < 0) {result >>= -mXZoom;}
-
+    IntZoom(result, mXZoom);
     result /= mXmm;
     result /= denominator;
     return static_cast<int>(result);
@@ -266,12 +292,19 @@ int PixelScaling::MilliMeterAsXPixel(int numerator, int denominator) const
 
 int PixelScaling::MilliMeterAsYPixel(int numerator, int denominator) const
 {
+    if (UseDouble())
+    {
+        double result = static_cast<double>(numerator);
+        result *= static_cast<double>(mYpx);
+        DoubleZoom(result, mYZoom);
+        result /= static_cast<double>(mYmm);
+        result /= static_cast<double>(denominator);
+        return static_cast<int>(result);
+    }
+
     qint64 result = numerator;
     result *= mYpx;
-
-    if (mYZoom > 0) {result <<= mYZoom;}
-    if (mYZoom < 0) {result >>= -mYZoom;}
-
+    IntZoom(result, mYZoom);
     result /= mYmm;
     result /= denominator;
     return static_cast<int>(result);
