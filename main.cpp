@@ -113,6 +113,9 @@ public:
     void OpenFile(const QString & fileName);
 protected:
     void paintEvent(QPaintEvent *);
+    void mousePressEvent(QMouseEvent *event);
+    void mouseMoveEvent(QMouseEvent *event);
+    void mouseReleaseEvent(QMouseEvent *event);
 private:
     const ActiveWaves::WaveList & Waves() const;
     void InitSize();
@@ -121,6 +124,8 @@ private:
     PixelScaling StandardScaling() const;
 
     ActiveWaves * mActiveWavesPtr;
+    QRubberBand * mRubberBandPtr;
+    QPoint mOrigin;
     int mXZoomValue;
     int mYZoomValue;
     bool mIsMarkSamples;
@@ -438,6 +443,7 @@ QPoint DrawChannel::CurrentPoint()
 WaveView::WaveView():
     QWidget(),
     mActiveWavesPtr(NULL),
+    mRubberBandPtr(NULL),
     mXZoomValue(0),
     mYZoomValue(0),
     mIsMarkSamples(false)
@@ -527,18 +533,39 @@ void WaveView::RebuildView()
     update();
 }
 
+void WaveView::mousePressEvent(QMouseEvent *event)
+{
+    mOrigin = event->pos();
+    if (!mRubberBandPtr)
+        mRubberBandPtr = new QRubberBand(QRubberBand::Rectangle, this);
+    mRubberBandPtr->setGeometry(QRect(mOrigin, QSize()));
+    mRubberBandPtr->show();
+}
+
+void WaveView::mouseMoveEvent(QMouseEvent *event)
+{
+    mRubberBandPtr->setGeometry(QRect(mOrigin, event->pos()).normalized());
+}
+
+void WaveView::mouseReleaseEvent(QMouseEvent *event)
+{
+    mRubberBandPtr->hide();
+    // determine selection, for example using QRect::intersects()
+    // and QRect::contains().
+}
+
 void WaveView::paintEvent(QPaintEvent *)
 {
     DrawGrid grid(StandardScaling());
     grid.Draw(*this);
 
     const int count = Waves().count();
-    const int channelHeight = height() / count;
 
     for (int index = 0; index < count; ++index)
     {
-        DrawChannel channel(Waves()[index], ZoomScaling());
+        const int channelHeight = height() / count;
         const int channelOffset = (index * channelHeight) + (channelHeight / 2);
+        DrawChannel channel(Waves()[index], ZoomScaling());
         channel.SetMarkSamples(mIsMarkSamples);
         channel.Draw(*this, channelOffset);
     }
