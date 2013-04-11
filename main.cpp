@@ -16,11 +16,16 @@ public:
     typedef QList<unsigned int> SampleList;
     const SampleList & Samples() const {return mSamples;}
     unsigned int SampleMask() const {return 0x3fffu;}
+    unsigned int MarkerMask() const {return 0xc000u;}
+    unsigned int PacerMask() const {return 0x8004u;}
+    unsigned int SaturationMask() const {return 0x8008u;}
+    unsigned int DefibMask() const {return 0x4001u;}
+    unsigned int QrsMask() const {return 0x4002u;}
     int SampleOffset() const {return 0x2000;}
     int SamplesPerSecond() const {return 500;}
-    int MilliMeterPerSecond() const {return 25;} // mm/s
-    int MilliMeterPerMilliVolt() const {return 10;} // mm/mV
-    int LsbPerMilliVolt() const {return 200;} // LSB/mV
+    int MilliMeterPerSecond() const {return 25;}
+    int MilliMeterPerMilliVolt() const {return 10;}
+    int LsbPerMilliVolt() const {return 200;}
     bool IsValid() const {return (mErrorCount == 0);}
 private:
     SampleList mSamples;
@@ -49,15 +54,15 @@ class PixelScaling
 {
 public:
     explicit PixelScaling(int xzoom, int yzoom);
-    int MilliMeterAsXPixel(int numerator, int denominator) const;
-    int MilliMeterAsYPixel(int numerator, int denominator) const;
+    int MilliMeterAsXPixel(int numerator, int factor = 1, int denominator = 1) const;
+    int MilliMeterAsYPixel(int numerator, int factor = 1, int denominator = 1) const;
 private:
     const int mXZoom;
     const int mYZoom;
-    int mXmm;
-    int mXpx;
-    int mYmm;
-    int mYpx;
+    double mXmm;
+    double mXpx;
+    double mYmm;
+    double mYpx;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -250,69 +255,36 @@ PixelScaling::PixelScaling(int xzoom, int yzoom):
     mYZoom(yzoom)
 {
     const QDesktopWidget desk;
-    mXmm = desk.widthMM();
-    mYmm = desk.heightMM();
-    mXpx = desk.width();
-    mYpx = desk.height();
+    mXmm = static_cast<double>(desk.widthMM());
+    mYmm = static_cast<double>(desk.heightMM());
+    mXpx = static_cast<double>(desk.width());
+    mYpx = static_cast<double>(desk.height());
 }
 
-inline static bool UseDouble()
+inline static int DoubleZoom(double value, int zoom)
 {
-    return true;
-}
-
-inline static void DoubleZoom(double & value, int zoom)
-{
-    value = (zoom < 0)
+    const double result = (zoom < 0)
         ? (value / static_cast<double>(1 << (-zoom)))
         : (value * static_cast<double>(1 << zoom));
-}
-
-inline static void IntZoom(qint64 & value, int zoom)
-{
-    value = (zoom < 0)
-        ? (value >> (-zoom))
-        : (value << zoom);
-}
-
-int PixelScaling::MilliMeterAsXPixel(int numerator, int denominator) const
-{
-    if (UseDouble())
-    {
-        double result = static_cast<double>(numerator);
-        result *= static_cast<double>(mXpx);
-        DoubleZoom(result, mXZoom);
-        result /= static_cast<double>(mXmm);
-        result /= static_cast<double>(denominator);
-        return static_cast<int>(result);
-    }
-
-    qint64 result = numerator;
-    result *= mXpx;
-    IntZoom(result, mXZoom);
-    result /= mXmm;
-    result /= denominator;
     return static_cast<int>(result);
 }
 
-int PixelScaling::MilliMeterAsYPixel(int numerator, int denominator) const
+inline static double DoubleValue(int numerator, int factor, int denominator)
 {
-    if (UseDouble())
-    {
-        double result = static_cast<double>(numerator);
-        result *= static_cast<double>(mYpx);
-        DoubleZoom(result, mYZoom);
-        result /= static_cast<double>(mYmm);
-        result /= static_cast<double>(denominator);
-        return static_cast<int>(result);
-    }
+    return (static_cast<double>(numerator) * static_cast<double>(factor)) /
+        static_cast<double>(denominator);
+}
 
-    qint64 result = numerator;
-    result *= mYpx;
-    IntZoom(result, mYZoom);
-    result /= mYmm;
-    result /= denominator;
-    return static_cast<int>(result);
+int PixelScaling::MilliMeterAsXPixel(int numerator, int factor, int denominator) const
+{
+    const double xpx = DoubleValue(numerator, factor, denominator) * mXpx / mXmm;
+    return DoubleZoom(xpx, mXZoom);
+}
+
+int PixelScaling::MilliMeterAsYPixel(int numerator, int factor, int denominator) const
+{
+    const double ypx = DoubleValue(numerator, factor, denominator) * mYpx / mYmm;
+    return DoubleZoom(ypx, mYZoom);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -340,10 +312,15 @@ void DrawGrid::DrawTimeGrid(QWidget & parent)
 
     for (int mm = 0; mm < max; mm += 5)
     {
-        const int xpx = mScalingPtr->MilliMeterAsXPixel(mm, 1);
+        const int xpx = mScalingPtr->MilliMeterAsXPixel(mm);
         pen.setStyle(((mm % 25) == 0) ? Qt::SolidLine : Qt::DotLine);
         painter.setPen(pen);
         painter.drawLine(xpx, 0, xpx, height);
+    }
+
+    if (max < 1)
+    {
+        qDebug() << "DrawGrid::DrawTimeGrid() width = " << max << "mm";
     }
 }
 
@@ -357,8 +334,13 @@ void DrawGrid::DrawValueGrid(QWidget & parent)
 
     for (int mm = 0; mm < max; mm += 5)
     {
-        const int ypx = mScalingPtr->MilliMeterAsYPixel(mm, 1);
+        const int ypx = mScalingPtr->MilliMeterAsYPixel(mm);
         painter.drawLine(0, ypx, width, ypx);
+    }
+    
+    if (max < 1)
+    {
+        qDebug() << "DrawGrid::DrawValueGrid() height = " << max << "mm";
     }
 }
 
@@ -414,18 +396,17 @@ bool DrawChannel::IsReading() const
     return (mSamplePosition < Wave().Samples().count());
 }
 
-int DrawChannel::YPixel(int pos) const
+int DrawChannel::YPixel(int sampleIndex) const
 {
-    const unsigned int rawValue = ((Wave().Samples()[pos]) & Wave().SampleMask());
-    const int value = rawValue - Wave().SampleOffset();
-    // Example: (100LSB * 10mm/mV) / 200LSB/mV = 5mm
-    return mScalingPtr->MilliMeterAsYPixel((value * Wave().MilliMeterPerMilliVolt()), Wave().LsbPerMilliVolt());
+    const unsigned int sample = Wave().Samples()[sampleIndex];
+    const unsigned int unsignedValue = sample & Wave().SampleMask();
+    const int value = unsignedValue - Wave().SampleOffset();
+    return mScalingPtr->MilliMeterAsYPixel(value, Wave().MilliMeterPerMilliVolt(), Wave().LsbPerMilliVolt());
 }
 
-int DrawChannel::XPixel(int pos) const
+int DrawChannel::XPixel(int sampleIndex) const
 {
-    // Example: (200 * 25mm/sec) / 500samples/sec = 10mm
-    return mScalingPtr->MilliMeterAsXPixel((pos * Wave().MilliMeterPerSecond()), Wave().SamplesPerSecond());
+    return mScalingPtr->MilliMeterAsXPixel(sampleIndex, Wave().MilliMeterPerSecond(), Wave().SamplesPerSecond());
 }
 
 QPoint DrawChannel::CurrentPoint()
@@ -535,9 +516,12 @@ void WaveView::RebuildView()
 
 void WaveView::mousePressEvent(QMouseEvent *event)
 {
-    mOrigin = event->pos();
     if (!mRubberBandPtr)
+    {
         mRubberBandPtr = new QRubberBand(QRubberBand::Rectangle, this);
+    }
+
+    mOrigin = event->pos();
     mRubberBandPtr->setGeometry(QRect(mOrigin, QSize()));
     mRubberBandPtr->show();
 }
@@ -547,11 +531,9 @@ void WaveView::mouseMoveEvent(QMouseEvent *event)
     mRubberBandPtr->setGeometry(QRect(mOrigin, event->pos()).normalized());
 }
 
-void WaveView::mouseReleaseEvent(QMouseEvent *event)
+void WaveView::mouseReleaseEvent(QMouseEvent *)
 {
     mRubberBandPtr->hide();
-    // determine selection, for example using QRect::intersects()
-    // and QRect::contains().
 }
 
 void WaveView::paintEvent(QPaintEvent *)
@@ -560,10 +542,11 @@ void WaveView::paintEvent(QPaintEvent *)
     grid.Draw(*this);
 
     const int count = Waves().count();
+    const int widgetHeight = height();
 
     for (int index = 0; index < count; ++index)
     {
-        const int channelHeight = height() / count;
+        const int channelHeight = widgetHeight / count;
         const int channelOffset = (index * channelHeight) + (channelHeight / 2);
         DrawChannel channel(Waves()[index], ZoomScaling());
         channel.SetMarkSamples(mIsMarkSamples);
