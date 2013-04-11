@@ -6,29 +6,59 @@
 // class declarations
 ////////////////////////////////////////////////////////////////////////////////
 
-class SingleWave
+class EcgSample
 {
 public:
-    SingleWave();
+    explicit EcgSample(unsigned int raw) : mRaw(raw) {}
+
+    static unsigned int FromSigned(int value)
+    {
+        unsigned int sampleValue = static_cast<unsigned int>(Offset() + value);
+        sampleValue &= ValueMask();
+        return sampleValue;
+    }
+
+    static unsigned int FromPaced(int value)
+    {
+        unsigned int pacedValue = static_cast<unsigned int>(Offset() + value);
+        pacedValue &= ValueMask();
+        pacedValue &= ~SaturationMask();
+        pacedValue |= PacerMask();
+        return pacedValue;
+    }
+
+    int Value() const {return (mRaw & ValueMask()) - Offset();}
+    bool IsPaced() const {return HasMarker(PacerMask());}
+    bool IsSaturated() const {return HasMarker(SaturationMask());}
+    bool IsDefib() const {return HasMarker(DefibMask());}
+    bool IsQrs() const {return HasMarker(QrsMask());}
+private:
+    static int Offset() {return 0x2000;}
+    static unsigned int ValueMask() {return 0x3fffu;}
+    static unsigned int PacerMask() {return 0x8004u;}
+    static unsigned int SaturationMask() {return 0x8008u;}
+    static unsigned int DefibMask() {return 0x4001u;}
+    static unsigned int QrsMask() {return 0x4002u;}
+    bool HasMarker(unsigned int mask) const {return ((mRaw & mask) == mask);}
+    unsigned int mRaw;
+};
+
+class AnyWave
+{
+public:
+    AnyWave();
     void BuildTestSignal();
     void BuildFromFile(const QString & name);
 
-    typedef QList<unsigned int> SampleList;
-    const SampleList & Samples() const {return mSamples;}
-    unsigned int SampleMask() const {return 0x3fffu;}
-    unsigned int MarkerMask() const {return 0xc000u;}
-    unsigned int PacerMask() const {return 0x8004u;}
-    unsigned int SaturationMask() const {return 0x8008u;}
-    unsigned int DefibMask() const {return 0x4001u;}
-    unsigned int QrsMask() const {return 0x4002u;}
-    int SampleOffset() const {return 0x2000;}
+    unsigned int Sample(int index) const {return mSamples[index];}
+    int SampleCount() const {return mSamples.count();}
     int SamplesPerSecond() const {return 500;}
     int MilliMeterPerSecond() const {return 25;}
     int MilliMeterPerMilliVolt() const {return 10;}
     int LsbPerMilliVolt() const {return 200;}
     bool IsValid() const {return (mErrorCount == 0);}
 private:
-    SampleList mSamples;
+    QList<unsigned int> mSamples;
     int mErrorCount;
 };
 
@@ -42,7 +72,7 @@ public:
     void AddFile(const QString & fileName);
     void AddTestSignal();
 
-    typedef QList<SingleWave> WaveList;
+    typedef QList<AnyWave> WaveList;
     const WaveList & Waves() const {return mWaves;}
 private:
     WaveList mWaves;
@@ -56,6 +86,8 @@ public:
     explicit PixelScaling(int xzoom, int yzoom);
     int MilliMeterAsXPixel(int numerator, int factor = 1, int denominator = 1) const;
     int MilliMeterAsYPixel(int numerator, int factor = 1, int denominator = 1) const;
+    double XPixelAsMilliMeter(int xpx) const;
+    double YPixelAsMilliMeter(int ypx) const;
 private:
     const int mXZoom;
     const int mYZoom;
@@ -84,22 +116,28 @@ private:
 class DrawChannel
 {
 public:
-    explicit DrawChannel(const SingleWave & wave, const PixelScaling & scaling);
-    void SetMarkSamples(bool isMark) {mIsMarkSamples = isMark;}
+    explicit DrawChannel(const AnyWave & wave, const PixelScaling & scaling);
+    void SetHighlightSamples(bool isTrue) {mIsHighlightSamples = isTrue;}
     void Draw(QWidget & parent, int offset);
     int MinimumWidth() const;
 private:
-    const SingleWave & Wave() const {return *mWavePtr;}
-    int YPixel(int pos) const;
-    int XPixel(int pos) const;
-    bool IsReading() const;
-    QPoint CurrentPoint();
+    void StartSampleIndex() {mSampleIndex = 0;}
+    void MoveSampleIndex() {++mSampleIndex;}
+    void DrawSamples(QPainter & painter);
+    void DrawSpecialSamples(QPainter & painter);
+    const AnyWave & Wave() const {return *mWavePtr;}
+    int YPixel() const;
+    int XPixel() const {return XPixel(mSampleIndex);}
+    int XPixel(int sampleIndex) const;
+    bool NotFinished() const;
+    QPoint Point() const;
+    EcgSample Sample() const;
 
     const PixelScaling * mScalingPtr;
-    const SingleWave * mWavePtr;
-    int mSamplePosition;
+    const AnyWave * mWavePtr;
     int mChannelOffset;
-    bool mIsMarkSamples;
+    int mSampleIndex;
+    bool mIsHighlightSamples;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -113,7 +151,7 @@ public:
     void YZoomIn();
     void YZoomOut();
     void ResetZoom();
-    void SetMarkSamples(bool isMarked);
+    void SetHighlightSamples(bool isTrue);
     void SetActiveWaves(ActiveWaves & arg);
     void OpenFile(const QString & fileName);
 protected:
@@ -133,7 +171,7 @@ private:
     QPoint mOrigin;
     int mXZoomValue;
     int mYZoomValue;
-    bool mIsMarkSamples;
+    bool mIsHighlightSamples;
 };
 
 class ArgumentParser
@@ -144,32 +182,32 @@ public:
     void PrintUsage();
     bool IsInvalid() const {return mIsInvalid;}
     bool IsTestSignal() const {return mIsTestSignal;}
-    bool IsMarkSamples() const {return mIsMarkSamples;}
+    bool IsHighlightSamples() const {return mIsHighlightSamples;}
     bool IsShowHelp() const {return mIsShowHelp;}
     const QStringList & Files() const {return mFiles;}
 private:
     void ParseLine(const QString & line);
     bool mIsInvalid;
     bool mIsTestSignal;
-    bool mIsMarkSamples;
+    bool mIsHighlightSamples;
     bool mIsShowHelp;
     QString mApplication;
     QStringList mFiles;
 };
     
 ////////////////////////////////////////////////////////////////////////////////
-// class SingleWave
+// class AnyWave
 ////////////////////////////////////////////////////////////////////////////////
 
-SingleWave::SingleWave():
+AnyWave::AnyWave():
     mSamples(),
     mErrorCount(0)
 {
 }
 
-void SingleWave::BuildTestSignal()
+void AnyWave::BuildTestSignal()
 {
-    qDebug("SingleWave::BuildTestSignal()");
+    qDebug("AnyWave::BuildTestSignal()");
     const int sampleCount = 10 * SamplesPerSecond();
     int value = LsbPerMilliVolt();
 
@@ -180,13 +218,17 @@ void SingleWave::BuildTestSignal()
             value -= LsbPerMilliVolt();
         }
 
-        mSamples.append(static_cast<unsigned int>(SampleOffset() + value));
+        mSamples.append(EcgSample::FromSigned(value));
     }
+
+    mSamples[0] = EcgSample::FromPaced(47);
+    mSamples[9] = EcgSample::FromPaced(-93);
+    mSamples[sampleCount - 1] = EcgSample::FromPaced(174);
 }
 
-void SingleWave::BuildFromFile(const QString & name)
+void AnyWave::BuildFromFile(const QString & name)
 {
-    qDebug("SingleWave::BuildFromFile(%s)", qPrintable(name));
+    qDebug("AnyWave::BuildFromFile(%s)", qPrintable(name));
     QFile file(name);
 
     if (!file.open(QIODevice::ReadOnly))
@@ -205,7 +247,7 @@ void SingleWave::BuildFromFile(const QString & name)
         ++count;
         qint16 sample;
         stream >> sample;
-        mSamples.append(static_cast<unsigned int>(sample));
+        mSamples.append(sample);
     }
 
     qDebug("... done with %d samples", count);
@@ -222,14 +264,14 @@ ActiveWaves::ActiveWaves():
 
 void ActiveWaves::AddTestSignal()
 {
-    SingleWave wave;
+    AnyWave wave;
     wave.BuildTestSignal();
     mWaves.append(wave);
 }
 
 void ActiveWaves::AddFile(const QString & fileName)
 {
-    SingleWave wave;
+    AnyWave wave;
     wave.BuildFromFile(fileName);
 
     if (wave.IsValid())
@@ -261,12 +303,24 @@ PixelScaling::PixelScaling(int xzoom, int yzoom):
     mYpx = static_cast<double>(desk.height());
 }
 
-inline static int DoubleZoom(double value, int zoom)
+inline static double AddZoomHelper(double value, int zoom)
 {
-    const double result = (zoom < 0)
-        ? (value / static_cast<double>(1 << (-zoom)))
-        : (value * static_cast<double>(1 << zoom));
-    return static_cast<int>(result);
+    if (zoom < 0)
+    {
+        return value / static_cast<double>(1 << (-zoom));
+    }
+
+    return value * static_cast<double>(1 << zoom);
+}
+
+inline static int AddZoom(double value, int zoom)
+{
+    return static_cast<int>(AddZoomHelper(value, zoom));
+}
+
+inline static double RemoveZoom(double value, int zoom)
+{
+    return AddZoomHelper(value, -zoom);
 }
 
 inline static double DoubleValue(int numerator, int factor, int denominator)
@@ -278,13 +332,25 @@ inline static double DoubleValue(int numerator, int factor, int denominator)
 int PixelScaling::MilliMeterAsXPixel(int numerator, int factor, int denominator) const
 {
     const double xpx = DoubleValue(numerator, factor, denominator) * mXpx / mXmm;
-    return DoubleZoom(xpx, mXZoom);
+    return AddZoom(xpx, mXZoom);
 }
 
 int PixelScaling::MilliMeterAsYPixel(int numerator, int factor, int denominator) const
 {
     const double ypx = DoubleValue(numerator, factor, denominator) * mYpx / mYmm;
-    return DoubleZoom(ypx, mYZoom);
+    return AddZoom(ypx, mYZoom);
+}
+
+double PixelScaling::XPixelAsMilliMeter(int xpx) const
+{
+    const double xmm = (static_cast<double>(xpx) * mXmm) / mXpx;
+    return RemoveZoom(xmm, mXZoom);
+}
+
+double PixelScaling::YPixelAsMilliMeter(int ypx) const
+{
+    const double ymm = (static_cast<double>(ypx) * mYmm) / mYpx;
+    return RemoveZoom(ymm, mYZoom);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -348,60 +414,95 @@ void DrawGrid::DrawValueGrid(QWidget & parent)
 // class DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
 
-DrawChannel::DrawChannel(const SingleWave & wave, const PixelScaling & scaling):
+DrawChannel::DrawChannel(const AnyWave & wave, const PixelScaling & scaling):
     mScalingPtr(&scaling),
     mWavePtr(&wave),
-    mSamplePosition(0),
     mChannelOffset(0),
-    mIsMarkSamples(false)
+    mSampleIndex(0),
+    mIsHighlightSamples(false)
 {
 }
 
 int DrawChannel::MinimumWidth() const
 {
-    return XPixel(Wave().Samples().count());
+    return XPixel(Wave().SampleCount());
 }
 
 void DrawChannel::Draw(QWidget & parent, int offset)
 {
-    QPen linePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    QPen pointPen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-
-    if (mIsMarkSamples)
-    {
-        pointPen.setWidth(3);
-        linePen.setColor(Qt::gray);
-    }
-
+    mChannelOffset = offset;
     QPainter painter(&parent);
     painter.setRenderHint(QPainter::Antialiasing, true);
+    DrawSamples(painter);
+}
 
-    mSamplePosition = 0;
-    mChannelOffset = offset;
-    QPoint from = CurrentPoint();
+void DrawChannel::DrawSamples(QPainter & painter)
+{
+    QPen defaultPen(Qt::gray, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    QPen highlightPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
 
-    while (IsReading())
+    if (!mIsHighlightSamples)
     {
-        const QPoint to = CurrentPoint();
-        painter.setPen(linePen);
-        painter.drawLine(from, to);
-        painter.setPen(pointPen);
-        painter.drawPoint(from);
-        from = to;
+        defaultPen.setColor(Qt::black);
+    }
+
+    StartSampleIndex();
+    QPoint fromPoint = Point();
+    DrawSpecialSamples(painter);
+    MoveSampleIndex();
+
+    while (NotFinished())
+    {
+        const QPoint toPoint = Point();
+        DrawSpecialSamples(painter);
+        painter.drawLine(fromPoint, toPoint);
+
+        if (mIsHighlightSamples)
+        {
+            painter.setPen(highlightPen);
+            painter.drawPoint(fromPoint);
+            painter.setPen(defaultPen);
+        }
+
+        fromPoint = toPoint;
+        MoveSampleIndex();
     }
 }
 
-bool DrawChannel::IsReading() const
+void DrawChannel::DrawSpecialSamples(QPainter & painter)
 {
-    return (mSamplePosition < Wave().Samples().count());
+    EcgSample sample = Sample();
+
+    if (sample.IsPaced())
+    {
+        painter.drawText(XPixel(), YPixel() - 30, QString("P"));
+    }
+
+    if (sample.IsSaturated())
+    {
+        painter.drawText(XPixel(), YPixel() - 30, QString("S"));
+    }
+
+    if (sample.IsDefib())
+    {
+        painter.drawText(XPixel(), YPixel() - 30, QString("D"));
+    }
+
+    if (sample.IsQrs())
+    {
+        painter.drawText(XPixel(), YPixel() - 30, QString("Q"));
+    }
 }
 
-int DrawChannel::YPixel(int sampleIndex) const
+bool DrawChannel::NotFinished() const
 {
-    const unsigned int sample = Wave().Samples()[sampleIndex];
-    const unsigned int unsignedValue = sample & Wave().SampleMask();
-    const int value = unsignedValue - Wave().SampleOffset();
-    return mScalingPtr->MilliMeterAsYPixel(value, Wave().MilliMeterPerMilliVolt(), Wave().LsbPerMilliVolt());
+    return (mSampleIndex < Wave().SampleCount());
+}
+
+int DrawChannel::YPixel() const
+{
+    return mChannelOffset -
+        mScalingPtr->MilliMeterAsYPixel(Sample().Value(), Wave().MilliMeterPerMilliVolt(), Wave().LsbPerMilliVolt());
 }
 
 int DrawChannel::XPixel(int sampleIndex) const
@@ -409,12 +510,14 @@ int DrawChannel::XPixel(int sampleIndex) const
     return mScalingPtr->MilliMeterAsXPixel(sampleIndex, Wave().MilliMeterPerSecond(), Wave().SamplesPerSecond());
 }
 
-QPoint DrawChannel::CurrentPoint()
+QPoint DrawChannel::Point() const
 {
-    const int xpx = XPixel(mSamplePosition);
-    const int ypx = YPixel(mSamplePosition);
-    ++mSamplePosition;
-    return QPoint(xpx, (mChannelOffset - ypx));
+    return QPoint(XPixel(), YPixel());
+}
+    
+EcgSample DrawChannel::Sample() const
+{
+    return EcgSample(Wave().Sample(mSampleIndex));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -427,7 +530,7 @@ WaveView::WaveView():
     mRubberBandPtr(NULL),
     mXZoomValue(0),
     mYZoomValue(0),
-    mIsMarkSamples(false)
+    mIsHighlightSamples(false)
 {
 }
 
@@ -462,9 +565,9 @@ void WaveView::ResetZoom()
     RebuildView();
 }
 
-void WaveView::SetMarkSamples(bool isMarked)
+void WaveView::SetHighlightSamples(bool isTrue)
 {
-    mIsMarkSamples = isMarked;
+    mIsHighlightSamples = isTrue;
     update();
 }
 
@@ -514,26 +617,45 @@ void WaveView::RebuildView()
     update();
 }
 
-void WaveView::mousePressEvent(QMouseEvent *event)
+void WaveView::mousePressEvent(QMouseEvent * eventPtr)
 {
     if (!mRubberBandPtr)
     {
         mRubberBandPtr = new QRubberBand(QRubberBand::Rectangle, this);
     }
 
-    mOrigin = event->pos();
+    mOrigin = eventPtr->pos();
     mRubberBandPtr->setGeometry(QRect(mOrigin, QSize()));
     mRubberBandPtr->show();
 }
 
-void WaveView::mouseMoveEvent(QMouseEvent *event)
+void WaveView::mouseMoveEvent(QMouseEvent * eventPtr)
 {
-    mRubberBandPtr->setGeometry(QRect(mOrigin, event->pos()).normalized());
+    mRubberBandPtr->setGeometry(QRect(mOrigin, eventPtr->pos()).normalized());
 }
 
-void WaveView::mouseReleaseEvent(QMouseEvent *)
+void WaveView::mouseReleaseEvent(QMouseEvent * eventPtr)
 {
+    mRubberBandPtr->setGeometry(QRect(mOrigin, eventPtr->pos()).normalized());
+    const QRect rect = mRubberBandPtr->geometry();
     mRubberBandPtr->hide();
+    PixelScaling scaling = ZoomScaling();
+    qDebug()
+        << "Selection: " << rect << "\n"
+        << "- width " << scaling.XPixelAsMilliMeter(rect.width()) << "mm\n"
+        << "- height " << scaling.YPixelAsMilliMeter(rect.height()) << "mm";
+
+    const double xmm = scaling.XPixelAsMilliMeter(rect.x());
+
+    for (int channelIndex = 0; channelIndex < Waves().count(); ++channelIndex)
+    {
+        const AnyWave & wv = Waves()[channelIndex];
+        const double samplePos =  xmm * static_cast<double>(wv.SamplesPerSecond()) /
+            static_cast<double>(wv.MilliMeterPerSecond());
+        const int sampleIndex = static_cast<int>(samplePos);
+        qDebug("channel %d: sample[%d] = 0x%04x",
+                channelIndex, sampleIndex, wv.Sample(sampleIndex));
+    }
 }
 
 void WaveView::paintEvent(QPaintEvent *)
@@ -549,7 +671,7 @@ void WaveView::paintEvent(QPaintEvent *)
         const int channelHeight = widgetHeight / count;
         const int channelOffset = (index * channelHeight) + (channelHeight / 2);
         DrawChannel channel(Waves()[index], ZoomScaling());
-        channel.SetMarkSamples(mIsMarkSamples);
+        channel.SetHighlightSamples(mIsHighlightSamples);
         channel.Draw(*this, channelOffset);
     }
 }
@@ -610,12 +732,12 @@ MainWindow::MainWindow()
     mZoomResetActionPtr->setEnabled(false);
     connect(mZoomResetActionPtr, SIGNAL(triggered()), this, SLOT(ResetZoom()));
 
-    mMarkSamplesActionPtr = new QAction(QString("Mark &Samples"), this);
-    mMarkSamplesActionPtr->setShortcut(QKeySequence(Qt::Key_S));
-    mMarkSamplesActionPtr->setEnabled(true);
-    mMarkSamplesActionPtr->setChecked(false);
-    mMarkSamplesActionPtr->setCheckable(true);
-    connect(mMarkSamplesActionPtr, SIGNAL(triggered()), this, SLOT(MarkSamples()));
+    mHighlightSamplesActionPtr = new QAction(QString("Highlight &Samples"), this);
+    mHighlightSamplesActionPtr->setShortcut(QKeySequence(Qt::Key_H));
+    mHighlightSamplesActionPtr->setEnabled(true);
+    mHighlightSamplesActionPtr->setChecked(false);
+    mHighlightSamplesActionPtr->setCheckable(true);
+    connect(mHighlightSamplesActionPtr, SIGNAL(triggered()), this, SLOT(HighlightSamples()));
 
     mOpenActionPtr = new QAction(tr("&Open..."), this);
     mOpenActionPtr->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_O));
@@ -638,7 +760,7 @@ MainWindow::MainWindow()
     mViewMenuPtr->addAction(mYZoomOutActionPtr);
     mViewMenuPtr->addAction(mZoomResetActionPtr);
     mViewMenuPtr->addSeparator();
-    mViewMenuPtr->addAction(mMarkSamplesActionPtr);
+    mViewMenuPtr->addAction(mHighlightSamplesActionPtr);
 
     mMainWindow.menuBar()->addMenu(mFileMenuPtr);
     mMainWindow.menuBar()->addMenu(mViewMenuPtr);
@@ -675,14 +797,15 @@ void MainWindow::YZoomOut()
     UpdateActions();
 }
 
-void MainWindow::SetMarkSamples(bool isMark)
+void MainWindow::SetHighlightSamples(bool isTrue)
 {
-    mWaveViewPtr->SetMarkSamples(isMark);
+    qDebug() << "SetHighlightSamples " << isTrue;
+    mWaveViewPtr->SetHighlightSamples(isTrue);
 }
 
-void MainWindow::MarkSamples()
+void MainWindow::HighlightSamples()
 {
-    SetMarkSamples(mMarkSamplesActionPtr->isChecked());
+    SetHighlightSamples(mHighlightSamplesActionPtr->isChecked());
     UpdateActions();
 }
 
@@ -727,7 +850,7 @@ void MainWindow::UpdateActions()
 ArgumentParser::ArgumentParser():
     mIsInvalid(false),
     mIsTestSignal(false),
-    mIsMarkSamples(false),
+    mIsHighlightSamples(false),
     mIsShowHelp(false),
     mFiles()
 {
@@ -754,9 +877,9 @@ void ArgumentParser::ParseLine(const QString & line)
         return;
     }
 
-    if ((line == QString("-m")) || (line == QString("--mark")))
+    if ((line == QString("-l")) || (line == QString("--highlight")))
     {
-        mIsMarkSamples = true;
+        mIsHighlightSamples = true;
         return;
     }
 
@@ -794,7 +917,7 @@ void ArgumentParser::PrintUsage()
     qDebug("  %s [options] [file1 file2 ...]", qPrintable(mApplication));
     qDebug("Options:");
     qDebug("  -t --test ... add test signal");
-    qDebug("  -m --mark ... mark samples");
+    qDebug("  -l --highlight ... highlight samples");
     qDebug("  -h --help ... show help");
 }
 
@@ -824,7 +947,7 @@ int main(int argc, char * argv[])
 
     MainWindow window;
     window.SetActiveWaves(activeWaves);
-    window.SetMarkSamples(arguments.IsMarkSamples());
+    window.SetHighlightSamples(arguments.IsHighlightSamples());
     return app.exec();
 }
 

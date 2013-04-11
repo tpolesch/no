@@ -15,7 +15,7 @@ class MainWindow : public QObject
 public:
     MainWindow();
     void SetActiveWaves(ActiveWaves & list);
-    void SetMarkSamples(bool isMark);
+    void SetHighlightSamples(bool isTrue);
 private:
     void UpdateActions();
     void UpdateView();
@@ -28,7 +28,7 @@ private:
     QAction * mYZoomInActionPtr;
     QAction * mYZoomOutActionPtr;
     QAction * mZoomResetActionPtr;
-    QAction * mMarkSamplesActionPtr;
+    QAction * mHighlightSamplesActionPtr;
     QAction * mOpenActionPtr;
     QAction * mExitActionPtr;
     QMenu * mFileMenuPtr;
@@ -39,7 +39,7 @@ private slots:
     void YZoomIn();
     void YZoomOut();
     void ResetZoom();
-    void MarkSamples();
+    void HighlightSamples();
     void OpenFile();
     void ExitApplication();
 };
