@@ -72,10 +72,10 @@ public:
     void AddFile(const QString & fileName);
     void AddTestSignal();
 
-    typedef QList<AnyWave> WaveList;
-    const WaveList & Waves() const {return mWaves;}
+    int WaveCount() const {return mWaves.count();}
+    const AnyWave & Wave(int index) const {return mWaves[index];}
 private:
-    WaveList mWaves;
+    QList<AnyWave> mWaves;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -160,7 +160,8 @@ protected:
     void mouseMoveEvent(QMouseEvent *event);
     void mouseReleaseEvent(QMouseEvent *event);
 private:
-    const ActiveWaves::WaveList & Waves() const;
+    int WaveCount() const {return mActiveWavesPtr->WaveCount();}
+    const AnyWave & Wave(int index) const {return mActiveWavesPtr->Wave(index);}
     void InitSize();
     void RebuildView();
     PixelScaling ZoomScaling() const;
@@ -583,18 +584,13 @@ void WaveView::SetActiveWaves(ActiveWaves & arg)
     InitSize();
 }
 
-const ActiveWaves::WaveList & WaveView::Waves() const
-{
-    return mActiveWavesPtr->Waves();
-}
-
 void WaveView::InitSize()
 {
     int minimumWidth = 0;
 
-    for (int index = 0; index < Waves().count(); ++index)
+    for (int index = 0; index < WaveCount(); ++index)
     {
-        DrawChannel channel(Waves()[index], ZoomScaling());
+        DrawChannel channel(Wave(index), ZoomScaling());
         const int channelWidth = channel.MinimumWidth();
 
         if (minimumWidth < channelWidth)
@@ -647,9 +643,9 @@ void WaveView::mouseReleaseEvent(QMouseEvent * eventPtr)
 
     const double xmm = scaling.XPixelAsMilliMeter(rect.x());
 
-    for (int channelIndex = 0; channelIndex < Waves().count(); ++channelIndex)
+    for (int channelIndex = 0; channelIndex < WaveCount(); ++channelIndex)
     {
-        const AnyWave & wv = Waves()[channelIndex];
+        const AnyWave & wv = Wave(channelIndex);
         const double samplePos =  xmm * static_cast<double>(wv.SamplesPerSecond()) /
             static_cast<double>(wv.MilliMeterPerSecond());
         const int sampleIndex = static_cast<int>(samplePos);
@@ -663,14 +659,14 @@ void WaveView::paintEvent(QPaintEvent *)
     DrawGrid grid(StandardScaling());
     grid.Draw(*this);
 
-    const int count = Waves().count();
+    const int count = WaveCount();
     const int widgetHeight = height();
 
     for (int index = 0; index < count; ++index)
     {
         const int channelHeight = widgetHeight / count;
         const int channelOffset = (index * channelHeight) + (channelHeight / 2);
-        DrawChannel channel(Waves()[index], ZoomScaling());
+        DrawChannel channel(Wave(index), ZoomScaling());
         channel.SetHighlightSamples(mIsHighlightSamples);
         channel.Draw(*this, channelOffset);
     }
