@@ -1,7 +1,7 @@
 #ifndef MAIN_WINDOW_H
 #define MAIN_WINDOW_H
 
-#include <QMainWindow>
+#include <QtWidgets/QMainWindow>
 
 class QScrollArea;
 class QAction;
@@ -16,6 +16,7 @@ public:
     MainWindow();
     void SetActiveWaves(ActiveWaves & list);
     void SetHighlightSamples(bool isTrue);
+    void Open(const QString & file);
 private:
     void UpdateActions();
     void UpdateView();

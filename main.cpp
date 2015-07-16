@@ -1,6 +1,34 @@
 
 #include "MainWindow.h"
-#include <QtGui>
+#include <QtWidgets>
+#include <QDebug>
+#include <util/LightTestImplementation.h>
+
+////////////////////////////////////////////////////////////////////////////////
+// class InfoLine
+////////////////////////////////////////////////////////////////////////////////
+
+struct InfoLine
+{
+    QString file;
+    QString label;
+    int sps;
+    int mask;
+    int offset;
+    int delay; // ms
+    double gain;
+
+    InfoLine():
+        file(""),
+        label(""),
+        sps(500),
+        mask(0xffff),
+        offset(0),
+        delay(0),
+        gain(1)
+    {
+    }
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 // class declarations
@@ -9,55 +37,31 @@
 class EcgSample
 {
 public:
-    explicit EcgSample(unsigned int raw) : mRaw(raw) {}
-
-    static unsigned int FromSigned(int value)
+    explicit EcgSample(unsigned int raw, const InfoLine & info)
     {
-        unsigned int sampleValue = static_cast<unsigned int>(Offset() + value);
-        sampleValue &= ValueMask();
-        return sampleValue;
+        const unsigned int lsb = raw & info.mask;
+        const int value = static_cast<int>(lsb) - info.offset;
+        milliVolt = info.gain * value;
     }
 
-    static unsigned int FromPaced(int value)
-    {
-        unsigned int pacedValue = static_cast<unsigned int>(Offset() + value);
-        pacedValue &= ValueMask();
-        pacedValue &= ~SaturationMask();
-        pacedValue |= PacerMask();
-        return pacedValue;
-    }
-
-    int Value() const {return (mRaw & ValueMask()) - Offset();}
-    bool IsPaced() const {return HasMarker(PacerMask());}
-    bool IsSaturated() const {return HasMarker(SaturationMask());}
-    bool IsDefib() const {return HasMarker(DefibMask());}
-    bool IsQrs() const {return HasMarker(QrsMask());}
+    double MilliVolt() const {return milliVolt;}
 private:
-    static int Offset() {return 0x2000;}
-    static unsigned int ValueMask() {return 0x3fffu;}
-    static unsigned int PacerMask() {return 0x8004u;}
-    static unsigned int SaturationMask() {return 0x8008u;}
-    static unsigned int DefibMask() {return 0x4001u;}
-    static unsigned int QrsMask() {return 0x4002u;}
-    bool HasMarker(unsigned int mask) const {return ((mRaw & mask) == mask);}
-    unsigned int mRaw;
+    double milliVolt;
 };
 
 class AnyWave
 {
 public:
-    AnyWave();
-    void BuildTestSignal();
-    void BuildFromFile(const QString & name);
-
-    unsigned int Sample(int index) const {return mSamples[index];}
+    explicit AnyWave();
+    void SetInfo(const InfoLine & info);
+    EcgSample Sample(int index) const {return EcgSample(mSamples[index], mInfo);}
     int SampleCount() const {return mSamples.count();}
-    int SamplesPerSecond() const {return 500;}
-    int MilliMeterPerSecond() const {return 25;}
-    int MilliMeterPerMilliVolt() const {return 10;}
-    int LsbPerMilliVolt() const {return 200;}
     bool IsValid() const {return (mErrorCount == 0);}
+    const InfoLine & Info() const {return mInfo;}
+    double MilliMeterPerSecond() const {return 25.0;}
+    double MilliMeterPerMilliVolt() const {return 10.0;}
 private:
+    InfoLine mInfo;
     QList<unsigned int> mSamples;
     int mErrorCount;
 };
@@ -68,9 +72,7 @@ class ActiveWaves
 {
 public:
     ActiveWaves();
-    void AddFileList(const QStringList & args);
-    void AddFile(const QString & fileName);
-    void AddTestSignal();
+    void AddFile(const InfoLine & info);
 
     int WaveCount() const {return mWaves.count();}
     const AnyWave & Wave(int index) const {return mWaves[index];}
@@ -84,8 +86,8 @@ class PixelScaling
 {
 public:
     explicit PixelScaling(int xzoom, int yzoom);
-    int MilliMeterAsXPixel(int numerator, int factor = 1, int denominator = 1) const;
-    int MilliMeterAsYPixel(int numerator, int factor = 1, int denominator = 1) const;
+    int MilliMeterAsXPixel(double arg, double factor = 1.0) const;
+    int MilliMeterAsYPixel(double arg, double factor = 1.0) const;
     double XPixelAsMilliMeter(int xpx) const;
     double YPixelAsMilliMeter(int ypx) const;
 private:
@@ -201,34 +203,16 @@ private:
 ////////////////////////////////////////////////////////////////////////////////
 
 AnyWave::AnyWave():
+    mInfo(),
     mSamples(),
     mErrorCount(0)
 {
 }
 
-void AnyWave::BuildTestSignal()
+void AnyWave::SetInfo(const InfoLine & info)
 {
-    qDebug("AnyWave::BuildTestSignal()");
-    const int sampleCount = 10 * SamplesPerSecond();
-    int value = LsbPerMilliVolt();
-
-    for (int index = 0; index < sampleCount; ++index)
-    {
-        if ((index % SamplesPerSecond()) == 0)
-        {
-            value -= LsbPerMilliVolt();
-        }
-
-        mSamples.append(EcgSample::FromSigned(value));
-    }
-
-    mSamples[0] = EcgSample::FromPaced(47);
-    mSamples[9] = EcgSample::FromPaced(-93);
-    mSamples[sampleCount - 1] = EcgSample::FromPaced(174);
-}
-
-void AnyWave::BuildFromFile(const QString & name)
-{
+    mInfo = info;
+    const QString name = info.file;
     qDebug("AnyWave::BuildFromFile(%s)", qPrintable(name));
     QFile file(name);
 
@@ -263,29 +247,14 @@ ActiveWaves::ActiveWaves():
 {
 }
 
-void ActiveWaves::AddTestSignal()
+void ActiveWaves::AddFile(const InfoLine & info)
 {
     AnyWave wave;
-    wave.BuildTestSignal();
-    mWaves.append(wave);
-}
-
-void ActiveWaves::AddFile(const QString & fileName)
-{
-    AnyWave wave;
-    wave.BuildFromFile(fileName);
+    wave.SetInfo(info);
 
     if (wave.IsValid())
     {
         mWaves.append(wave);
-    }
-}
-
-void ActiveWaves::AddFileList(const QStringList & list)
-{
-    for (int index = 0; index < list.count(); ++index)
-    {
-        AddFile(list[index]);
     }
 }
 
@@ -324,21 +293,15 @@ inline static double RemoveZoom(double value, int zoom)
     return AddZoomHelper(value, -zoom);
 }
 
-inline static double DoubleValue(int numerator, int factor, int denominator)
+int PixelScaling::MilliMeterAsXPixel(double arg, double factor) const
 {
-    return (static_cast<double>(numerator) * static_cast<double>(factor)) /
-        static_cast<double>(denominator);
-}
-
-int PixelScaling::MilliMeterAsXPixel(int numerator, int factor, int denominator) const
-{
-    const double xpx = DoubleValue(numerator, factor, denominator) * mXpx / mXmm;
+    const double xpx = arg * factor * mXpx / mXmm;
     return AddZoom(xpx, mXZoom);
 }
 
-int PixelScaling::MilliMeterAsYPixel(int numerator, int factor, int denominator) const
+int PixelScaling::MilliMeterAsYPixel(double arg, double factor) const
 {
-    const double ypx = DoubleValue(numerator, factor, denominator) * mYpx / mYmm;
+    const double ypx = arg * factor * mYpx / mYmm;
     return AddZoom(ypx, mYZoom);
 }
 
@@ -470,29 +433,8 @@ void DrawChannel::DrawSamples(QPainter & painter)
     }
 }
 
-void DrawChannel::DrawSpecialSamples(QPainter & painter)
+void DrawChannel::DrawSpecialSamples(QPainter & )
 {
-    EcgSample sample = Sample();
-
-    if (sample.IsPaced())
-    {
-        painter.drawText(XPixel(), YPixel() - 30, QString("P"));
-    }
-
-    if (sample.IsSaturated())
-    {
-        painter.drawText(XPixel(), YPixel() - 30, QString("S"));
-    }
-
-    if (sample.IsDefib())
-    {
-        painter.drawText(XPixel(), YPixel() - 30, QString("D"));
-    }
-
-    if (sample.IsQrs())
-    {
-        painter.drawText(XPixel(), YPixel() - 30, QString("Q"));
-    }
 }
 
 bool DrawChannel::NotFinished() const
@@ -503,12 +445,14 @@ bool DrawChannel::NotFinished() const
 int DrawChannel::YPixel() const
 {
     return mChannelOffset -
-        mScalingPtr->MilliMeterAsYPixel(Sample().Value(), Wave().MilliMeterPerMilliVolt(), Wave().LsbPerMilliVolt());
+        mScalingPtr->MilliMeterAsYPixel(Sample().MilliVolt(), Wave().MilliMeterPerMilliVolt());
 }
 
 int DrawChannel::XPixel(int sampleIndex) const
 {
-    return mScalingPtr->MilliMeterAsXPixel(sampleIndex, Wave().MilliMeterPerSecond(), Wave().SamplesPerSecond());
+    double second = sampleIndex;
+    second /= Wave().Info().sps;
+    return mScalingPtr->MilliMeterAsXPixel(second, Wave().MilliMeterPerSecond());
 }
 
 QPoint DrawChannel::Point() const
@@ -519,6 +463,104 @@ QPoint DrawChannel::Point() const
 EcgSample DrawChannel::Sample() const
 {
     return EcgSample(Wave().Sample(mSampleIndex));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// class TextFileReader
+////////////////////////////////////////////////////////////////////////////////
+
+class TextFileReader
+{
+    QStringList mLines;
+public:
+    explicit TextFileReader(const QString & fileName)
+    {
+        QFile file(fileName);
+
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            QMessageBox::information(0, "error", file.errorString());
+            return;
+        }
+
+        QTextStream in(&file);
+        while (!in.atEnd()) {mLines.append(in.readLine());}    
+        file.close();
+    }
+    
+    const QStringList & Lines() const {return mLines;}
+};
+
+////////////////////////////////////////////////////////////////////////////////
+// class InfoLineParser
+////////////////////////////////////////////////////////////////////////////////
+
+class InfoLineParser
+{
+    QList<InfoLine> mList;
+public:
+    explicit InfoLineParser(const QString & line)
+    {
+        Parse(line);
+    }
+
+    explicit InfoLineParser(const QStringList & lines)
+    {
+        for (auto & line:lines)
+        {
+            Parse(line);
+        }
+    }
+    
+    const QList<InfoLine> & List() const {return mList;}
+private:
+    void Parse(const QString & line)
+    {
+        const QStringList list = line.split(QRegExp("\\s+|="));
+        bool done = true;
+        if (list.count() < 5) {return;}
+
+        // mandatory
+        InfoLine info;
+        info.file = list[0];
+        info.label = list[4];
+        info.sps = list[1].toInt(&done, 0);
+
+        // optional
+        QString value;
+        if (done && FindKey(list, "gain",   value)) {info.gain   = value.toDouble(&done);}
+        if (done && FindKey(list, "s-mask", value)) {info.mask   = value.toInt(&done, 0);}
+        if (done && FindKey(list, "offset", value)) {info.offset = value.toInt(&done, 0);}
+        if (done && FindKey(list, "delay",  value)) {info.delay  = value.toInt(&done, 0);}
+        if (done) {mList.append(info);}
+    }
+
+    bool FindKey(const QStringList & list, const QString & key, QString & dst) const
+    {
+        for (int index = 5; index < list.count() - 1; ++index)
+        {
+            if (key == list[index])
+            {
+                dst = list[index + 1];
+                return true;
+            }
+        }
+
+        dst = "unknown";
+        return false;
+    }
+};
+
+TEST(InfoLineParser, Examples)
+{
+    InfoLineParser obj("ecg.dat 500 1 mV \"E_01_16\" gain=0.005 s-mask=0x3fff offset=0x1fff delay=200");
+    const InfoLine & got = obj.List()[0];
+    EXPECT_EQ("ecg.dat", got.file);
+    EXPECT_EQ(500, got.sps);
+    EXPECT_EQ(200, static_cast<int>(1.0 / got.gain));
+    EXPECT_EQ(0x3fffu, got.mask);
+    EXPECT_EQ(0x1fffu, got.offset);
+    EXPECT_EQ(200, got.delay);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -574,7 +616,23 @@ void WaveView::SetHighlightSamples(bool isTrue)
 
 void WaveView::OpenFile(const QString & fileName)
 {
-    mActiveWavesPtr->AddFile(fileName);
+    if (QFileInfo(fileName).suffix() == "info")
+    {
+        TextFileReader read(fileName);
+        InfoLineParser parse(read.Lines());
+
+        for (auto & info:parse.List())
+        {
+            mActiveWavesPtr->AddFile(info);
+        }
+    }
+    else
+    {
+        InfoLine info;
+        info.file = fileName;
+        mActiveWavesPtr->AddFile(info);
+    }
+
     RebuildView();
 }
 
@@ -646,11 +704,11 @@ void WaveView::mouseReleaseEvent(QMouseEvent * eventPtr)
     for (int channelIndex = 0; channelIndex < WaveCount(); ++channelIndex)
     {
         const AnyWave & wv = Wave(channelIndex);
-        const double samplePos =  xmm * static_cast<double>(wv.SamplesPerSecond()) /
+        const double samplePos =  xmm * static_cast<double>(wv.Info().sps) /
             static_cast<double>(wv.MilliMeterPerSecond());
         const int sampleIndex = static_cast<int>(samplePos);
-        qDebug("channel %d: sample[%d] = 0x%04x",
-                channelIndex, sampleIndex, wv.Sample(sampleIndex));
+        qDebug("channel %d: mv[%d] = %f",
+                channelIndex, sampleIndex, wv.Sample(sampleIndex).MilliVolt());
     }
 }
 
@@ -760,6 +818,11 @@ MainWindow::MainWindow()
 
     mMainWindow.menuBar()->addMenu(mFileMenuPtr);
     mMainWindow.menuBar()->addMenu(mViewMenuPtr);
+}
+
+void MainWindow::Open(const QString & file)
+{
+    mWaveViewPtr->OpenFile(file);
 }
 
 void MainWindow::SetActiveWaves(ActiveWaves & list)
@@ -923,6 +986,9 @@ void ArgumentParser::PrintUsage()
 
 int main(int argc, char * argv[])
 {
+    const int testResult = LightTest::RunTests(argc, argv);
+    if (testResult != 0) {return testResult;}
+
     QApplication app(argc, argv);
     ArgumentParser arguments;
     arguments.ParseList(app.arguments());
@@ -934,16 +1000,16 @@ int main(int argc, char * argv[])
     }
 
     ActiveWaves activeWaves;
-    activeWaves.AddFileList(arguments.Files());
-
-    if (arguments.IsTestSignal())
-    {
-        activeWaves.AddTestSignal();
-    }
-
     MainWindow window;
     window.SetActiveWaves(activeWaves);
     window.SetHighlightSamples(arguments.IsHighlightSamples());
+
+    if (arguments.Files().count() > 0)
+    {
+        window.Open(arguments.Files()[0]);
+    }
+
     return app.exec();
 }
+
 
