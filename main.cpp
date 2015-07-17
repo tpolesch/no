@@ -9,6 +9,11 @@
 typedef int64_t IntType;
 typedef IntType MicroSecond;
 
+inline static MicroSecond FromMilliSec(IntType ms)
+{
+    return ms * 1000ll;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // InfoLine
 ////////////////////////////////////////////////////////////////////////////////
@@ -146,7 +151,7 @@ private:
                 return;
             }
 
-            mSamplePeriod = 1000000ll / sps;
+            mSamplePeriod = FromMilliSec(1000) / sps;
         }
         else
         {
@@ -157,7 +162,7 @@ private:
         QString dst;
         if (isValid && Find(dst, optPos, "s-mask")) {mSampleMask   = dst.toUInt(&isValid, 0);}
         if (isValid && Find(dst, optPos, "offset")) {mSampleOffset = dst.toInt(&isValid, 0);}
-        if (isValid && Find(dst, optPos, "delay"))  {mSignalDelay = 1000ll * dst.toInt(&isValid, 0);}
+        if (isValid && Find(dst, optPos, "delay"))  {mSignalDelay = FromMilliSec(dst.toInt(&isValid, 0));}
         if (isValid && Find(dst, optPos, "gain"))   {mSampleGain   = dst.toDouble(&isValid);}
         if (!isValid) {AddError();}
     }
@@ -181,7 +186,7 @@ private:
     void AddError()
     {
         ++mErrors;
-        qDebug() << "Could not parse: " << mLine;
+        qDebug() << "Could not parse: " << qPrintable(mLine);
     }
 };
 
