@@ -6,24 +6,24 @@
 class QScrollArea;
 class QAction;
 class QMenu;
-class WaveView;
-class ActiveWaves;
+class MainView;
+class MainData;
 
 class MainWindow : public QObject
 {
     Q_OBJECT
 public:
     MainWindow();
-    void SetActiveWaves(ActiveWaves & list);
+    void SetData(MainData & data);
     void SetHighlightSamples(bool isTrue);
-    void Open(const QString & file);
+    void OpenFile(const QString & file);
 private:
     void UpdateActions();
     void UpdateView();
 
     QMainWindow mMainWindow;
     QScrollArea * mScrollAreaPtr;
-    WaveView * mWaveViewPtr; 
+    MainView * mMainViewPtr; 
     QAction * mXZoomInActionPtr;
     QAction * mXZoomOutActionPtr;
     QAction * mYZoomInActionPtr;

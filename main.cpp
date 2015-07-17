@@ -5,81 +5,287 @@
 #include <util/LightTestImplementation.h>
 
 ////////////////////////////////////////////////////////////////////////////////
-// class InfoLine
+
+typedef int64_t IntType;
+typedef IntType MicroSecond;
+
+////////////////////////////////////////////////////////////////////////////////
+// InfoLine
 ////////////////////////////////////////////////////////////////////////////////
 
-struct InfoLine
+class InfoLine
 {
-    QString file;
-    QString label;
-    int sps;
-    int mask;
-    int offset;
-    int delay; // ms
-    double gain;
-
-    InfoLine():
-        file(""),
-        label(""),
-        sps(500),
-        mask(0xffff),
-        offset(0),
-        delay(0),
-        gain(1)
+private:
+    unsigned int mErrors;
+    unsigned int mSampleMask;
+    int mSampleOffset;
+    MicroSecond mSignalDelay;
+    MicroSecond mSamplePeriod;
+    double mDivisor;
+    double mSampleGain;
+    QString mLine;
+    QString mOperator;
+    QString mFileName;
+    QString mUnit;
+    QString mLabel;
+    QList<double> mValues;
+public:
+    explicit InfoLine(const QString & txt):
+        mErrors(0),
+        mSampleMask(0xffffu),
+        mSampleOffset(0),
+        mSignalDelay(0),
+        mSamplePeriod(0),
+        mDivisor(1.0),
+        mSampleGain(1.0),
+        mLine(txt),
+        mOperator(""),
+        mFileName(""),
+        mUnit(""),
+        mLabel(""),
+        mValues()
     {
+        Parse();
+        if (mFileName.size() > 0) {SetSamples();}
+    }
+    
+    MicroSecond SamplePeriod() const
+    {
+        return mSamplePeriod;
+    }
+
+    MicroSecond Duration() const
+    {
+        return mSignalDelay + SamplePeriod() * mValues.size();
+    }
+
+    double At(MicroSecond us) const
+    {
+        const IntType index = (us - mSignalDelay) / SamplePeriod();
+        return ((index >= 0) && (index < mValues.count()))
+            ? mValues[index]
+            : NAN;
+    }
+
+    bool IsValid() const
+    {
+        return (mErrors == 0);
+    }
+
+    bool IsOperator(const QString & arg) const
+    {
+        return (mOperator == arg);
+    }
+
+    void Minus(const InfoLine & other)
+    {
+        QList<double> result;
+
+        for (IntType us = 0; us < Duration(); us += SamplePeriod())
+        {
+            const double a = At(us);
+            const double b = other.At(us);
+            if (isnan(a) || (isnan(b))) continue;
+            result.append(a - b);
+        }
+
+        mValues = result;
+        mSignalDelay = 0;
+    }
+private:
+    void SetSamples()
+    {
+        QFile read(mFileName);
+
+        if (!read.open(QIODevice::ReadOnly))
+        {
+            AddError();
+            return;
+        }
+
+        QDataStream stream(&read);
+        stream.setByteOrder(QDataStream::BigEndian);
+
+        while (!stream.atEnd())
+        {
+            quint16 sample;
+            stream >> sample;
+            const int lsb = (sample & mSampleMask) - mSampleOffset;
+            mValues.append(mSampleGain * lsb);
+        }
+
+        read.close();
+    }
+
+    void Parse()
+    {
+        if (!QRegularExpression("^[>+-]").match(mLine).hasMatch())
+        {
+            mLine = "> " + mLine;
+        }
+
+        int optPos = -1;
+        bool isValid = true;
+        QRegularExpression re("^([>+-])\\s*(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s*");
+        QRegularExpressionMatch match = re.match(mLine);
+
+        if (match.hasMatch())
+        {
+            int sps = 0;
+            mOperator = match.captured(1);
+            mFileName = match.captured(2);
+            if (isValid) {sps = match.captured(3).toInt(&isValid);}
+            if (isValid) {mDivisor = match.captured(4).toDouble(&isValid);}
+            mUnit = match.captured(5);
+            mLabel = match.captured(6);
+            optPos = match.capturedEnd(0);
+
+            if (sps == 0)
+            {
+                AddError();
+                return;
+            }
+
+            mSamplePeriod = 1000000ll / sps;
+        }
+        else
+        {
+            AddError();
+            return;
+        }
+
+        QString dst;
+        if (isValid && Find(dst, optPos, "s-mask")) {mSampleMask   = dst.toUInt(&isValid, 0);}
+        if (isValid && Find(dst, optPos, "offset")) {mSampleOffset = dst.toInt(&isValid, 0);}
+        if (isValid && Find(dst, optPos, "delay"))  {mSignalDelay = 1000ll * dst.toInt(&isValid, 0);}
+        if (isValid && Find(dst, optPos, "gain"))   {mSampleGain   = dst.toDouble(&isValid);}
+        if (!isValid) {AddError();}
+    }
+
+    bool Find(QString & dst, int startPos, const QString & key) const
+    {
+        const QString pattern = key + QString("[=\\s](\\S+)");
+        QRegularExpression re(pattern);
+        QRegularExpressionMatch match = re.match(mLine, startPos);
+
+        if (match.hasMatch())
+        {
+            dst = match.captured(1);
+            return true;
+        }
+
+        dst = "";
+        return false;
+    }
+
+    void AddError()
+    {
+        ++mErrors;
+        qDebug() << "Could not parse: " << mLine;
+    }
+};
+
+TEST(InfoLine, Parse)
+{
+    EXPECT_TRUE(InfoLine("wave.dat 500 1 mV X").IsValid());
+    EXPECT_TRUE(InfoLine("wave.dat 500 1.0 mV X").IsValid());
+    EXPECT_FALSE(InfoLine("wave.dat 500 1 mV ").IsValid()); // label missing
+    EXPECT_FALSE(InfoLine("wave.dat 500 D mV X").IsValid()); // divisor wrong
+    EXPECT_FALSE(InfoLine("wave.dat 500.0 1 mV X").IsValid()); // sps wrong
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// class ChannelData
+////////////////////////////////////////////////////////////////////////////////
+
+class ChannelData
+{
+private:
+    QList<InfoLine> mLines;
+public:
+    void Plus(InfoLine & line)
+    {
+        mLines.append(line);
+    }
+
+    void Minus(InfoLine & line)
+    {
+        const int index = mLines.count() - 1;
+        mLines[index].Minus(line);
+    }
+    
+    const QList<InfoLine> & Lines() const
+    {
+       return mLines;
     }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-// class declarations
+// class MainData
 ////////////////////////////////////////////////////////////////////////////////
 
-class EcgSample
+class MainData
 {
+private:
+    QList<ChannelData> mChannels;
 public:
-    explicit EcgSample(unsigned int raw, const InfoLine & info)
+    void OpenFile(const QString & name)
     {
-        const unsigned int lsb = raw & info.mask;
-        const int value = static_cast<int>(lsb) - info.offset;
-        milliVolt = info.gain * value;
+        mChannels.clear();
+        QFile file(name);
+
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            QMessageBox::information(0, "error", file.errorString());
+            return;
+        }
+
+        QTextStream in(&file);
+        QList<InfoLine> lines;
+
+        while (!in.atEnd())
+        {
+            lines.append(InfoLine(in.readLine()));
+        }
+        
+        for (auto & line:lines)
+        {
+            if (line.IsValid())
+            {
+                if (line.IsOperator(">")) New(line);
+                if (line.IsOperator("+")) Plus(line);
+                if (line.IsOperator("-")) Minus(line);
+            }
+        }
     }
 
-    double MilliVolt() const {return milliVolt;}
+    const QList<ChannelData> & Channels() const
+    {
+       return mChannels;
+    }
 private:
-    double milliVolt;
-};
+    void New(InfoLine & line)
+    {
+        ChannelData data;
+        mChannels.append(data);
+        Plus(line);
+    }
 
-class AnyWave
-{
-public:
-    explicit AnyWave();
-    void SetInfo(const InfoLine & info);
-    EcgSample Sample(int index) const {return EcgSample(mSamples[index], mInfo);}
-    int SampleCount() const {return mSamples.count();}
-    bool IsValid() const {return (mErrorCount == 0);}
-    const InfoLine & Info() const {return mInfo;}
-    double MilliMeterPerSecond() const {return 25.0;}
-    double MilliMeterPerMilliVolt() const {return 10.0;}
-private:
-    InfoLine mInfo;
-    QList<unsigned int> mSamples;
-    int mErrorCount;
+    void Plus(InfoLine & line)
+    {
+        const int index = mChannels.count() - 1;
+        mChannels[index].Plus(line);
+    }
+
+    void Minus(InfoLine & line)
+    {
+        const int index = mChannels.count() - 1;
+        mChannels[index].Minus(line);
+    }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-
-class ActiveWaves
-{
-public:
-    ActiveWaves();
-    void AddFile(const InfoLine & info);
-
-    int WaveCount() const {return mWaves.count();}
-    const AnyWave & Wave(int index) const {return mWaves[index];}
-private:
-    QList<AnyWave> mWaves;
-};
-
+// class PixelScaling
 ////////////////////////////////////////////////////////////////////////////////
 
 class PixelScaling
@@ -100,6 +306,8 @@ private:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+// DrawGrid
+////////////////////////////////////////////////////////////////////////////////
 
 class DrawGrid
 {
@@ -110,51 +318,53 @@ private:
     void DrawTimeGrid(QWidget & parent);
     void DrawValueGrid(QWidget & parent);
 
-    const PixelScaling * mScalingPtr;
+    const PixelScaling & mScaling;
 };
 
+////////////////////////////////////////////////////////////////////////////////
+// DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
 
 class DrawChannel
 {
 public:
-    explicit DrawChannel(const AnyWave & wave, const PixelScaling & scaling);
+    explicit DrawChannel(const ChannelData & wave, const PixelScaling & scaling);
     void SetHighlightSamples(bool isTrue) {mIsHighlightSamples = isTrue;}
     void Draw(QWidget & parent, int offset);
     int MinimumWidth() const;
 private:
-    void StartSampleIndex() {mSampleIndex = 0;}
-    void MoveSampleIndex() {++mSampleIndex;}
+    void StartSampleTime() {mSampleTime = 0;}
+    void MoveSampleTime() {mSampleTime += Line().SamplePeriod();}
     void DrawSamples(QPainter & painter);
-    void DrawSpecialSamples(QPainter & painter);
-    const AnyWave & Wave() const {return *mWavePtr;}
     int YPixel() const;
-    int XPixel() const {return XPixel(mSampleIndex);}
-    int XPixel(int sampleIndex) const;
+    int XPixel() const {return XPixel(mSampleTime);}
+    int XPixel(MicroSecond sampleTime) const;
     bool NotFinished() const;
+    bool IsValidPoint() const;
     QPoint Point() const;
-    EcgSample Sample() const;
+    const InfoLine & Line() const {return mData.Lines()[mLineIndex];}
 
-    const PixelScaling * mScalingPtr;
-    const AnyWave * mWavePtr;
+    const PixelScaling & mScaling;
+    const ChannelData & mData;
     int mChannelOffset;
-    int mSampleIndex;
+    MicroSecond mSampleTime;
+    int mLineIndex;
     bool mIsHighlightSamples;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
 
-class WaveView : public QWidget
+class MainView : public QWidget
 {
 public:
-    WaveView();
+    MainView();
     void XZoomIn();
     void XZoomOut();
     void YZoomIn();
     void YZoomOut();
     void ResetZoom();
     void SetHighlightSamples(bool isTrue);
-    void SetActiveWaves(ActiveWaves & arg);
+    void SetData(MainData & arg);
     void OpenFile(const QString & fileName);
 protected:
     void paintEvent(QPaintEvent *);
@@ -162,14 +372,14 @@ protected:
     void mouseMoveEvent(QMouseEvent *event);
     void mouseReleaseEvent(QMouseEvent *event);
 private:
-    int WaveCount() const {return mActiveWavesPtr->WaveCount();}
-    const AnyWave & Wave(int index) const {return mActiveWavesPtr->Wave(index);}
     void InitSize();
     void RebuildView();
     PixelScaling ZoomScaling() const;
     PixelScaling StandardScaling() const;
+    int ChannelCount() const {return mDataPtr->Channels().count();}
+    const ChannelData & DataChannel(int index) {return mDataPtr->Channels()[index];}
 
-    ActiveWaves * mActiveWavesPtr;
+    MainData * mDataPtr;
     QRubberBand * mRubberBandPtr;
     QPoint mOrigin;
     int mXZoomValue;
@@ -184,80 +394,20 @@ public:
     void ParseList(QStringList list);
     void PrintUsage();
     bool IsInvalid() const {return mIsInvalid;}
-    bool IsTestSignal() const {return mIsTestSignal;}
+    bool IsUnitTest() const {return mIsUnitTest;}
     bool IsHighlightSamples() const {return mIsHighlightSamples;}
     bool IsShowHelp() const {return mIsShowHelp;}
     const QStringList & Files() const {return mFiles;}
 private:
     void ParseLine(const QString & line);
     bool mIsInvalid;
-    bool mIsTestSignal;
+    bool mIsUnitTest;
     bool mIsHighlightSamples;
     bool mIsShowHelp;
     QString mApplication;
     QStringList mFiles;
 };
     
-////////////////////////////////////////////////////////////////////////////////
-// class AnyWave
-////////////////////////////////////////////////////////////////////////////////
-
-AnyWave::AnyWave():
-    mInfo(),
-    mSamples(),
-    mErrorCount(0)
-{
-}
-
-void AnyWave::SetInfo(const InfoLine & info)
-{
-    mInfo = info;
-    const QString name = info.file;
-    qDebug("AnyWave::BuildFromFile(%s)", qPrintable(name));
-    QFile file(name);
-
-    if (!file.open(QIODevice::ReadOnly))
-    {
-        qDebug("... failed");
-        ++mErrorCount;
-        return;
-    }
-
-    QDataStream stream(&file);
-    stream.setByteOrder(QDataStream::BigEndian);
-    int count = 0;
-
-    while (!stream.atEnd())
-    {
-        ++count;
-        qint16 sample;
-        stream >> sample;
-        mSamples.append(sample);
-    }
-
-    qDebug("... done with %d samples", count);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// class ActiveWaves
-////////////////////////////////////////////////////////////////////////////////
-
-ActiveWaves::ActiveWaves():
-    mWaves()
-{
-}
-
-void ActiveWaves::AddFile(const InfoLine & info)
-{
-    AnyWave wave;
-    wave.SetInfo(info);
-
-    if (wave.IsValid())
-    {
-        mWaves.append(wave);
-    }
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // class PixelScaling
 ////////////////////////////////////////////////////////////////////////////////
@@ -322,7 +472,7 @@ double PixelScaling::YPixelAsMilliMeter(int ypx) const
 ////////////////////////////////////////////////////////////////////////////////
 
 DrawGrid::DrawGrid(const PixelScaling & scaling):
-    mScalingPtr(&scaling)
+    mScaling(scaling)
 {
 }
 
@@ -342,7 +492,7 @@ void DrawGrid::DrawTimeGrid(QWidget & parent)
 
     for (int mm = 0; mm < max; mm += 5)
     {
-        const int xpx = mScalingPtr->MilliMeterAsXPixel(mm);
+        const int xpx = mScaling.MilliMeterAsXPixel(mm);
         pen.setStyle(((mm % 25) == 0) ? Qt::SolidLine : Qt::DotLine);
         painter.setPen(pen);
         painter.drawLine(xpx, 0, xpx, height);
@@ -364,7 +514,7 @@ void DrawGrid::DrawValueGrid(QWidget & parent)
 
     for (int mm = 0; mm < max; mm += 5)
     {
-        const int ypx = mScalingPtr->MilliMeterAsYPixel(mm);
+        const int ypx = mScaling.MilliMeterAsYPixel(mm);
         painter.drawLine(0, ypx, width, ypx);
     }
     
@@ -378,18 +528,25 @@ void DrawGrid::DrawValueGrid(QWidget & parent)
 // class DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
 
-DrawChannel::DrawChannel(const AnyWave & wave, const PixelScaling & scaling):
-    mScalingPtr(&scaling),
-    mWavePtr(&wave),
+DrawChannel::DrawChannel(const ChannelData & data, const PixelScaling & scaling):
+    mScaling(scaling),
+    mData(data),
     mChannelOffset(0),
-    mSampleIndex(0),
+    mSampleTime(0),
+    mLineIndex(0),
     mIsHighlightSamples(false)
 {
 }
 
 int DrawChannel::MinimumWidth() const
 {
-    return XPixel(Wave().SampleCount());
+    MicroSecond max = 0;
+    for (auto & data:mData.Lines())
+    {
+        const MicroSecond time = data.Duration();
+        if (max < time) max = time;
+    }
+    return XPixel(max);
 }
 
 void DrawChannel::Draw(QWidget & parent, int offset)
@@ -410,49 +567,60 @@ void DrawChannel::DrawSamples(QPainter & painter)
         defaultPen.setColor(Qt::black);
     }
 
-    StartSampleIndex();
-    QPoint fromPoint = Point();
-    DrawSpecialSamples(painter);
-    MoveSampleIndex();
-
-    while (NotFinished())
+    for (mLineIndex = 0; mLineIndex < mData.Lines().count(); ++mLineIndex)
     {
-        const QPoint toPoint = Point();
-        DrawSpecialSamples(painter);
-        painter.drawLine(fromPoint, toPoint);
+        StartSampleTime();
+        QPoint fromPoint = Point();
+        bool fromValid = IsValidPoint();
+        MoveSampleTime();
 
-        if (mIsHighlightSamples)
+        while (NotFinished())
         {
-            painter.setPen(highlightPen);
-            painter.drawPoint(fromPoint);
-            painter.setPen(defaultPen);
+            const QPoint toPoint = Point();
+            const bool toValid = IsValidPoint();
+
+            if (fromValid && toValid)
+            {
+                painter.drawLine(fromPoint, toPoint);
+
+                if (mIsHighlightSamples)
+                {
+                    painter.setPen(highlightPen);
+                    painter.drawPoint(fromPoint);
+                    painter.setPen(defaultPen);
+                }
+            }
+
+            fromValid = toValid;
+            fromPoint = toPoint;
+            MoveSampleTime();
         }
-
-        fromPoint = toPoint;
-        MoveSampleIndex();
     }
-}
-
-void DrawChannel::DrawSpecialSamples(QPainter & )
-{
 }
 
 bool DrawChannel::NotFinished() const
 {
-    return (mSampleIndex < Wave().SampleCount());
+    return (mSampleTime < Line().Duration());
 }
+
+double MilliMeterPerMilliVolt() {return 10.0;}
+double MilliMeterPerSecond() {return 25.0;}
 
 int DrawChannel::YPixel() const
 {
-    return mChannelOffset -
-        mScalingPtr->MilliMeterAsYPixel(Sample().MilliVolt(), Wave().MilliMeterPerMilliVolt());
+    const double value = Line().At(mSampleTime);
+    return mChannelOffset - mScaling.MilliMeterAsYPixel(value, MilliMeterPerMilliVolt());
 }
 
-int DrawChannel::XPixel(int sampleIndex) const
+int DrawChannel::XPixel(MicroSecond sampleTime) const
 {
-    double second = sampleIndex;
-    second /= Wave().Info().sps;
-    return mScalingPtr->MilliMeterAsXPixel(second, Wave().MilliMeterPerSecond());
+    const double second = static_cast<double>(sampleTime) / 1000000.0;
+    return mScaling.MilliMeterAsXPixel(second, MilliMeterPerSecond());
+}
+
+bool DrawChannel::IsValidPoint() const
+{
+    return !isnan(Line().At(mSampleTime));
 }
 
 QPoint DrawChannel::Point() const
@@ -460,218 +628,98 @@ QPoint DrawChannel::Point() const
     return QPoint(XPixel(), YPixel());
 }
     
-EcgSample DrawChannel::Sample() const
-{
-    return EcgSample(Wave().Sample(mSampleIndex));
-}
-
 ////////////////////////////////////////////////////////////////////////////////
-// class TextFileReader
+// class MainView
 ////////////////////////////////////////////////////////////////////////////////
 
-class TextFileReader
-{
-    QStringList mLines;
-public:
-    explicit TextFileReader(const QString & fileName)
-    {
-        QFile file(fileName);
-
-        if (!file.open(QIODevice::ReadOnly))
-        {
-            QMessageBox::information(0, "error", file.errorString());
-            return;
-        }
-
-        QTextStream in(&file);
-        while (!in.atEnd()) {mLines.append(in.readLine());}    
-        file.close();
-    }
-    
-    const QStringList & Lines() const {return mLines;}
-};
-
-////////////////////////////////////////////////////////////////////////////////
-// class InfoLineParser
-////////////////////////////////////////////////////////////////////////////////
-
-class InfoLineParser
-{
-    QList<InfoLine> mList;
-public:
-    explicit InfoLineParser(const QString & line)
-    {
-        Parse(line);
-    }
-
-    explicit InfoLineParser(const QStringList & lines)
-    {
-        for (auto & line:lines)
-        {
-            Parse(line);
-        }
-    }
-    
-    const QList<InfoLine> & List() const {return mList;}
-private:
-    void Parse(const QString & line)
-    {
-        const QStringList list = line.split(QRegExp("\\s+|="));
-        bool done = true;
-        if (list.count() < 5) {return;}
-
-        // mandatory
-        InfoLine info;
-        info.file = list[0];
-        info.label = list[4];
-        info.sps = list[1].toInt(&done, 0);
-
-        // optional
-        QString value;
-        if (done && FindKey(list, "gain",   value)) {info.gain   = value.toDouble(&done);}
-        if (done && FindKey(list, "s-mask", value)) {info.mask   = value.toInt(&done, 0);}
-        if (done && FindKey(list, "offset", value)) {info.offset = value.toInt(&done, 0);}
-        if (done && FindKey(list, "delay",  value)) {info.delay  = value.toInt(&done, 0);}
-        if (done) {mList.append(info);}
-    }
-
-    bool FindKey(const QStringList & list, const QString & key, QString & dst) const
-    {
-        for (int index = 5; index < list.count() - 1; ++index)
-        {
-            if (key == list[index])
-            {
-                dst = list[index + 1];
-                return true;
-            }
-        }
-
-        dst = "unknown";
-        return false;
-    }
-};
-
-TEST(InfoLineParser, Examples)
-{
-    InfoLineParser obj("ecg.dat 500 1 mV \"E_01_16\" gain=0.005 s-mask=0x3fff offset=0x1fff delay=200");
-    const InfoLine & got = obj.List()[0];
-    EXPECT_EQ("ecg.dat", got.file);
-    EXPECT_EQ(500, got.sps);
-    EXPECT_EQ(200, static_cast<int>(1.0 / got.gain));
-    EXPECT_EQ(0x3fffu, got.mask);
-    EXPECT_EQ(0x1fffu, got.offset);
-    EXPECT_EQ(200, got.delay);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// class WaveView
-////////////////////////////////////////////////////////////////////////////////
-
-WaveView::WaveView():
+MainView::MainView():
     QWidget(),
-    mActiveWavesPtr(NULL),
-    mRubberBandPtr(NULL),
+    mDataPtr(nullptr),
+    mRubberBandPtr(nullptr),
     mXZoomValue(0),
     mYZoomValue(0),
     mIsHighlightSamples(false)
 {
 }
 
-void WaveView::XZoomIn()
+void MainView::XZoomIn()
 {
     ++mXZoomValue;
     RebuildView();
 }
 
-void WaveView::XZoomOut()
+void MainView::XZoomOut()
 {
     --mXZoomValue;
     RebuildView();
 }
 
-void WaveView::YZoomIn()
+void MainView::YZoomIn()
 {
     ++mYZoomValue;
     RebuildView();
 }
 
-void WaveView::YZoomOut()
+void MainView::YZoomOut()
 {
     --mYZoomValue;
     RebuildView();
 }
 
-void WaveView::ResetZoom()
+void MainView::ResetZoom()
 {
     mXZoomValue = 0;
     mYZoomValue = 0;
     RebuildView();
 }
 
-void WaveView::SetHighlightSamples(bool isTrue)
+void MainView::SetHighlightSamples(bool isTrue)
 {
     mIsHighlightSamples = isTrue;
     update();
 }
 
-void WaveView::OpenFile(const QString & fileName)
+void MainView::OpenFile(const QString & fileName)
 {
-    if (QFileInfo(fileName).suffix() == "info")
-    {
-        TextFileReader read(fileName);
-        InfoLineParser parse(read.Lines());
-
-        for (auto & info:parse.List())
-        {
-            mActiveWavesPtr->AddFile(info);
-        }
-    }
-    else
-    {
-        InfoLine info;
-        info.file = fileName;
-        mActiveWavesPtr->AddFile(info);
-    }
-
+    mDataPtr->OpenFile(fileName);
     RebuildView();
 }
 
-void WaveView::SetActiveWaves(ActiveWaves & arg)
+void MainView::SetData(MainData & arg)
 {
-    mActiveWavesPtr = &arg;
+    mDataPtr = &arg;
     InitSize();
 }
 
-void WaveView::InitSize()
+void MainView::InitSize()
 {
     int minimumWidth = 0;
 
-    for (int index = 0; index < WaveCount(); ++index)
+    for (int index = 0; index < ChannelCount(); ++index)
     {
-        DrawChannel channel(Wave(index), ZoomScaling());
+        DrawChannel channel(DataChannel(index), ZoomScaling());
         const int channelWidth = channel.MinimumWidth();
 
         if (minimumWidth < channelWidth)
         {
             minimumWidth = channelWidth;
         }
-
     }
 
     const int width = minimumWidth + 10;
     setMinimumWidth(width);
     resize(width, height());
 
-    qDebug("WaveView::InitSize() width = %d", width);
+    qDebug("MainView::InitSize() width = %d", width);
 }
 
-void WaveView::RebuildView()
+void MainView::RebuildView()
 {
     InitSize();
     update();
 }
 
-void WaveView::mousePressEvent(QMouseEvent * eventPtr)
+void MainView::mousePressEvent(QMouseEvent * eventPtr)
 {
     if (!mRubberBandPtr)
     {
@@ -683,12 +731,12 @@ void WaveView::mousePressEvent(QMouseEvent * eventPtr)
     mRubberBandPtr->show();
 }
 
-void WaveView::mouseMoveEvent(QMouseEvent * eventPtr)
+void MainView::mouseMoveEvent(QMouseEvent * eventPtr)
 {
     mRubberBandPtr->setGeometry(QRect(mOrigin, eventPtr->pos()).normalized());
 }
 
-void WaveView::mouseReleaseEvent(QMouseEvent * eventPtr)
+void MainView::mouseReleaseEvent(QMouseEvent * eventPtr)
 {
     mRubberBandPtr->setGeometry(QRect(mOrigin, eventPtr->pos()).normalized());
     const QRect rect = mRubberBandPtr->geometry();
@@ -701,41 +749,42 @@ void WaveView::mouseReleaseEvent(QMouseEvent * eventPtr)
 
     const double xmm = scaling.XPixelAsMilliMeter(rect.x());
 
-    for (int channelIndex = 0; channelIndex < WaveCount(); ++channelIndex)
+    for (int channelIndex = 0; channelIndex < ChannelCount(); ++channelIndex)
     {
-        const AnyWave & wv = Wave(channelIndex);
-        const double samplePos =  xmm * static_cast<double>(wv.Info().sps) /
-            static_cast<double>(wv.MilliMeterPerSecond());
-        const int sampleIndex = static_cast<int>(samplePos);
-        qDebug("channel %d: mv[%d] = %f",
-                channelIndex, sampleIndex, wv.Sample(sampleIndex).MilliVolt());
+#warning "TODO"
+        ///const AnyWave & wv = DataChannel(channelIndex);
+        ///const double samplePos =  xmm * static_cast<double>(wv.Info().sps) /
+        ///    static_cast<double>(wv.MilliMeterPerSecond());
+        ///const int sampleIndex = static_cast<int>(samplePos);
+        ///qDebug("channel %d: mv[%d] = %f",
+        ///        channelIndex, sampleIndex, wv.Sample(sampleIndex).MilliVolt());
     }
 }
 
-void WaveView::paintEvent(QPaintEvent *)
+void MainView::paintEvent(QPaintEvent *)
 {
     DrawGrid grid(StandardScaling());
     grid.Draw(*this);
 
-    const int count = WaveCount();
+    const int count = ChannelCount();
     const int widgetHeight = height();
 
     for (int index = 0; index < count; ++index)
     {
         const int channelHeight = widgetHeight / count;
         const int channelOffset = (index * channelHeight) + (channelHeight / 2);
-        DrawChannel channel(Wave(index), ZoomScaling());
+        DrawChannel channel(DataChannel(index), ZoomScaling());
         channel.SetHighlightSamples(mIsHighlightSamples);
         channel.Draw(*this, channelOffset);
     }
 }
     
-PixelScaling WaveView::ZoomScaling() const
+PixelScaling MainView::ZoomScaling() const
 {
     return PixelScaling(mXZoomValue, mYZoomValue);
 }
 
-PixelScaling WaveView::StandardScaling() const
+PixelScaling MainView::StandardScaling() const
 {
     return PixelScaling(0, 0);
 }
@@ -746,16 +795,16 @@ PixelScaling WaveView::StandardScaling() const
 
 MainWindow::MainWindow()
 {
-    mWaveViewPtr = new WaveView();
-    mWaveViewPtr->setBackgroundRole(QPalette::Base);
-    mWaveViewPtr->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    mMainViewPtr = new MainView();
+    mMainViewPtr->setBackgroundRole(QPalette::Base);
+    mMainViewPtr->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 
     mScrollAreaPtr = new QScrollArea();
     mScrollAreaPtr->setBackgroundRole(QPalette::Dark);
     mScrollAreaPtr->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     mScrollAreaPtr->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     mScrollAreaPtr->setWidgetResizable(true);
-    mScrollAreaPtr->setWidget(mWaveViewPtr);
+    mScrollAreaPtr->setWidget(mMainViewPtr);
 
     mMainWindow.setCentralWidget(mScrollAreaPtr);
     mMainWindow.setWindowTitle(QString("no"));
@@ -820,46 +869,46 @@ MainWindow::MainWindow()
     mMainWindow.menuBar()->addMenu(mViewMenuPtr);
 }
 
-void MainWindow::Open(const QString & file)
+void MainWindow::OpenFile(const QString & file)
 {
-    mWaveViewPtr->OpenFile(file);
+    mMainViewPtr->OpenFile(file);
 }
 
-void MainWindow::SetActiveWaves(ActiveWaves & list)
+void MainWindow::SetData(MainData & data)
 {
-    mWaveViewPtr->SetActiveWaves(list);
+    mMainViewPtr->SetData(data);
     UpdateActions();
     mMainWindow.show();
 }
 
 void MainWindow::XZoomIn()
 {
-    mWaveViewPtr->XZoomIn();
+    mMainViewPtr->XZoomIn();
     UpdateActions();
 }
 
 void MainWindow::XZoomOut()
 {
-    mWaveViewPtr->XZoomOut();
+    mMainViewPtr->XZoomOut();
     UpdateActions();
 }
 
 void MainWindow::YZoomIn()
 {
-    mWaveViewPtr->YZoomIn();
+    mMainViewPtr->YZoomIn();
     UpdateActions();
 }
 
 void MainWindow::YZoomOut()
 {
-    mWaveViewPtr->YZoomOut();
+    mMainViewPtr->YZoomOut();
     UpdateActions();
 }
 
 void MainWindow::SetHighlightSamples(bool isTrue)
 {
     qDebug() << "SetHighlightSamples " << isTrue;
-    mWaveViewPtr->SetHighlightSamples(isTrue);
+    mMainViewPtr->SetHighlightSamples(isTrue);
 }
 
 void MainWindow::HighlightSamples()
@@ -870,7 +919,7 @@ void MainWindow::HighlightSamples()
 
 void MainWindow::ResetZoom()
 {
-    mWaveViewPtr->ResetZoom();
+    mMainViewPtr->ResetZoom();
     UpdateActions();
 }
 
@@ -881,12 +930,10 @@ void MainWindow::ExitApplication()
 
 void MainWindow::OpenFile()
 {
-    QString fileName = QFileDialog::getOpenFileName(&mMainWindow, QString("Open File"), QDir::currentPath());
-
-    if (!fileName.isEmpty())
-    {
-        mWaveViewPtr->OpenFile(fileName);
-    }
+    OpenFile(QFileDialog::getOpenFileName(
+                &mMainWindow,
+                QString("Open File"),
+                QDir::currentPath()));
 }
 
 void MainWindow::UpdateView()
@@ -908,7 +955,7 @@ void MainWindow::UpdateActions()
 
 ArgumentParser::ArgumentParser():
     mIsInvalid(false),
-    mIsTestSignal(false),
+    mIsUnitTest(false),
     mIsHighlightSamples(false),
     mIsShowHelp(false),
     mFiles()
@@ -932,7 +979,7 @@ void ArgumentParser::ParseLine(const QString & line)
 {
     if ((line == QString("-t")) || (line == QString("--test")))
     {
-        mIsTestSignal = true;
+        mIsUnitTest = true;
         return;
     }
 
@@ -986,12 +1033,14 @@ void ArgumentParser::PrintUsage()
 
 int main(int argc, char * argv[])
 {
-    const int testResult = LightTest::RunTests(argc, argv);
-    if (testResult != 0) {return testResult;}
-
     QApplication app(argc, argv);
     ArgumentParser arguments;
     arguments.ParseList(app.arguments());
+
+    if (arguments.IsUnitTest())
+    {
+        return LightTest::RunTests(argc, argv);
+    }
 
     if (arguments.IsShowHelp() || arguments.IsInvalid())
     {
@@ -999,14 +1048,14 @@ int main(int argc, char * argv[])
         return 0;
     }
 
-    ActiveWaves activeWaves;
+    MainData data;
     MainWindow window;
-    window.SetActiveWaves(activeWaves);
+    window.SetData(data);
     window.SetHighlightSamples(arguments.IsHighlightSamples());
 
     if (arguments.Files().count() > 0)
     {
-        window.Open(arguments.Files()[0]);
+        window.OpenFile(arguments.Files()[0]);
     }
 
     return app.exec();
