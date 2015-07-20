@@ -9,7 +9,7 @@ class QMenu;
 class MainView;
 class MainData;
 
-class MainWindow : public QObject
+class MainWindow : public QMainWindow
 {
     Q_OBJECT
 public:
@@ -18,12 +18,10 @@ public:
     void SetHighlightSamples(bool isTrue);
     void OpenFile(const QString & file);
 private:
-    void UpdateActions();
-    void UpdateView();
-
-    QMainWindow mMainWindow;
     QScrollArea * mScrollAreaPtr;
     MainView * mMainViewPtr; 
+    QAction * mZoomInActionPtr;
+    QAction * mZoomOutActionPtr;
     QAction * mXZoomInActionPtr;
     QAction * mXZoomOutActionPtr;
     QAction * mYZoomInActionPtr;
@@ -35,6 +33,8 @@ private:
     QMenu * mFileMenuPtr;
     QMenu * mViewMenuPtr;
 private slots:
+    void ZoomIn();
+    void ZoomOut();
     void XZoomIn();
     void XZoomOut();
     void YZoomIn();

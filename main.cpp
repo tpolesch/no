@@ -8,6 +8,9 @@
 
 typedef int64_t IntType;
 typedef IntType MicroSecond;
+typedef IntType MilliSecond;
+typedef double FloatType;
+typedef FloatType MilliVolt;
 
 inline static MicroSecond FromMilliSec(IntType ms)
 {
@@ -297,11 +300,18 @@ class PixelScaling
 {
 public:
     explicit PixelScaling(int xzoom, int yzoom);
-    int MilliMeterAsXPixel(double arg, double factor = 1.0) const;
-    int MilliMeterAsYPixel(double arg, double factor = 1.0) const;
+    int MilliMeterAsXPixel(double arg) const;
+    int MilliMeterAsYPixel(double arg) const;
+    int MilliVoltAsYPixel(MilliVolt arg) const;
+    int MicroSecondAsXPixel(MicroSecond arg) const;
     double XPixelAsMilliMeter(int xpx) const;
     double YPixelAsMilliMeter(int ypx) const;
+    MilliSecond XPixelAsMilliSecond(int xpx) const;
+    MicroSecond XPixelAsMicroSecond(int xpx) const;
+    MilliVolt YPixelAsMilliVolt(int ypx) const;
 private:
+    static double MilliMeterPerMilliVolt() {return 10.0;}
+    static double MilliMeterPerSecond() {return 25.0;}
     const int mXZoom;
     const int mYZoom;
     double mXmm;
@@ -335,16 +345,13 @@ class DrawChannel
 public:
     explicit DrawChannel(const ChannelData & wave, const PixelScaling & scaling);
     void SetHighlightSamples(bool isTrue) {mIsHighlightSamples = isTrue;}
-    void Draw(QWidget & parent, int offset);
+    void Draw(QWidget & parent, const QRect & rect, int offset);
     int MinimumWidth() const;
 private:
-    void StartSampleTime() {mSampleTime = 0;}
-    void MoveSampleTime() {mSampleTime += Line().SamplePeriod();}
-    void DrawSamples(QPainter & painter);
+    void DrawSamples(QPainter & painter, const QRect & rect);
     int YPixel() const;
     int XPixel() const {return XPixel(mSampleTime);}
     int XPixel(MicroSecond sampleTime) const;
-    bool NotFinished() const;
     bool IsValidPoint() const;
     QPoint Point() const;
     const InfoLine & Line() const {return mData.Lines()[mLineIndex];}
@@ -359,10 +366,13 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////////
 
+class Measure;
 class MainView : public QWidget
 {
 public:
     MainView();
+    void ZoomIn();
+    void ZoomOut();
     void XZoomIn();
     void XZoomOut();
     void YZoomIn();
@@ -371,11 +381,10 @@ public:
     void SetHighlightSamples(bool isTrue);
     void SetData(MainData & arg);
     void OpenFile(const QString & fileName);
+    void UpdateMeasurement(const QRect & rect);
 protected:
     void paintEvent(QPaintEvent *);
-    void mousePressEvent(QMouseEvent *event);
-    void mouseMoveEvent(QMouseEvent *event);
-    void mouseReleaseEvent(QMouseEvent *event);
+    void mousePressEvent(QMouseEvent *);
 private:
     void InitSize();
     void RebuildView();
@@ -385,12 +394,60 @@ private:
     const ChannelData & DataChannel(int index) {return mDataPtr->Channels()[index];}
 
     MainData * mDataPtr;
-    QRubberBand * mRubberBandPtr;
-    QPoint mOrigin;
+    Measure * mMeasurePtr;
     int mXZoomValue;
     int mYZoomValue;
     bool mIsHighlightSamples;
 };
+
+////////////////////////////////////////////////////////////////////////////////
+
+class Measure : public QWidget
+{
+public:
+    Measure(MainView * parent):
+        QWidget(parent),
+        mParent(parent)
+    {
+        QPalette pal = palette();
+        pal.setBrush(QPalette::Window, QColor(0, 0, 0, 50) );
+        setPalette(pal);
+        setAutoFillBackground(true);
+
+        setWindowFlags(Qt::SubWindow);
+        QHBoxLayout * layout = new QHBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        QSizeGrip * grip = new QSizeGrip(this);
+        layout->addWidget(grip, 0, Qt::AlignRight | Qt::AlignBottom);
+    }
+private:
+    void mousePressEvent(QMouseEvent *evt)
+    {
+        mLastPos = evt->globalPos();
+    }
+
+    void mouseMoveEvent(QMouseEvent *evt)
+    {
+        const QPoint delta = evt->globalPos() - mLastPos;
+        move(x()+delta.x(), y()+delta.y());
+        mLastPos = evt->globalPos();
+    }
+
+    void moveEvent(QMoveEvent *)
+    {
+        mParent->UpdateMeasurement(geometry());
+    }
+
+    void resizeEvent(QResizeEvent *)
+    {
+        mParent->UpdateMeasurement(geometry());
+    }
+
+    MainView * mParent;
+    QPoint mLastPos;
+};
+
+////////////////////////////////////////////////////////////////////////////////
 
 class ArgumentParser
 {
@@ -448,16 +505,27 @@ inline static double RemoveZoom(double value, int zoom)
     return AddZoomHelper(value, -zoom);
 }
 
-int PixelScaling::MilliMeterAsXPixel(double arg, double factor) const
+int PixelScaling::MilliMeterAsXPixel(double arg) const
 {
-    const double xpx = arg * factor * mXpx / mXmm;
+    const double xpx = arg * mXpx / mXmm;
     return AddZoom(xpx, mXZoom);
 }
 
-int PixelScaling::MilliMeterAsYPixel(double arg, double factor) const
+int PixelScaling::MilliMeterAsYPixel(double arg) const
 {
-    const double ypx = arg * factor * mYpx / mYmm;
+    const double ypx = arg * mYpx / mYmm;
     return AddZoom(ypx, mYZoom);
+}
+
+int PixelScaling::MilliVoltAsYPixel(MilliVolt mv) const
+{
+    return MilliMeterAsYPixel(mv * MilliMeterPerMilliVolt());
+}
+
+int PixelScaling::MicroSecondAsXPixel(MicroSecond us) const
+{
+    const double sec = static_cast<double>(us) / 1000000.0;
+    return MilliMeterAsXPixel(sec * MilliMeterPerSecond());
 }
 
 double PixelScaling::XPixelAsMilliMeter(int xpx) const
@@ -466,10 +534,26 @@ double PixelScaling::XPixelAsMilliMeter(int xpx) const
     return RemoveZoom(xmm, mXZoom);
 }
 
-double PixelScaling::YPixelAsMilliMeter(int ypx) const
+double PixelScaling::YPixelAsMilliMeter(int px) const
 {
-    const double ymm = (static_cast<double>(ypx) * mYmm) / mYpx;
-    return RemoveZoom(ymm, mYZoom);
+    const double mm = (static_cast<double>(px) * mYmm) / mYpx;
+    return RemoveZoom(mm, mYZoom);
+}
+
+MilliSecond PixelScaling::XPixelAsMilliSecond(int px) const
+{
+    const FloatType mm = XPixelAsMilliMeter(px);
+    return static_cast<MilliSecond>(1000.0 * mm / MilliMeterPerSecond());
+}
+
+MicroSecond PixelScaling::XPixelAsMicroSecond(int px) const
+{
+    return static_cast<MicroSecond>(XPixelAsMilliSecond(px) * 1000ll);
+}
+
+MilliVolt PixelScaling::YPixelAsMilliVolt(int px) const
+{
+    return YPixelAsMilliMeter(px) / MilliMeterPerMilliVolt();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -554,15 +638,15 @@ int DrawChannel::MinimumWidth() const
     return XPixel(max);
 }
 
-void DrawChannel::Draw(QWidget & parent, int offset)
+void DrawChannel::Draw(QWidget & parent, const QRect & rect, int offset)
 {
     mChannelOffset = offset;
     QPainter painter(&parent);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    DrawSamples(painter);
+    DrawSamples(painter, rect);
 }
 
-void DrawChannel::DrawSamples(QPainter & painter)
+void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
     QPen defaultPen(Qt::gray, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     QPen highlightPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
@@ -572,17 +656,39 @@ void DrawChannel::DrawSamples(QPainter & painter)
         defaultPen.setColor(Qt::black);
     }
 
+    const MicroSecond drawBegin = mScaling.XPixelAsMicroSecond(rect.left());
+    const MicroSecond drawEnd = mScaling.XPixelAsMicroSecond(rect.right());
+    const MicroSecond pixelPeriod = mScaling.XPixelAsMicroSecond(1);
+
     for (mLineIndex = 0; mLineIndex < mData.Lines().count(); ++mLineIndex)
     {
-        StartSampleTime();
+        const MicroSecond samplePeriod = Line().SamplePeriod();
+        MicroSecond begin = 0;
+        MicroSecond end = Line().Duration();
+
+        if (begin < drawBegin)
+        {
+            begin = drawBegin;
+        }
+
+        if (end > drawEnd)
+        {
+            end = drawEnd;
+        }
+
+        begin -= 2 * (samplePeriod + pixelPeriod);
+        end += 2 * (samplePeriod + pixelPeriod);
+
+        mSampleTime = begin;
         QPoint fromPoint = Point();
         bool fromValid = IsValidPoint();
-        MoveSampleTime();
+        mSampleTime += samplePeriod;
 
-        while (NotFinished())
+        while (mSampleTime < end)
         {
             const QPoint toPoint = Point();
             const bool toValid = IsValidPoint();
+            mSampleTime += samplePeriod;
 
             if (fromValid && toValid)
             {
@@ -598,29 +704,19 @@ void DrawChannel::DrawSamples(QPainter & painter)
 
             fromValid = toValid;
             fromPoint = toPoint;
-            MoveSampleTime();
         }
     }
 }
 
-bool DrawChannel::NotFinished() const
-{
-    return (mSampleTime < Line().Duration());
-}
-
-double MilliMeterPerMilliVolt() {return 10.0;}
-double MilliMeterPerSecond() {return 25.0;}
-
 int DrawChannel::YPixel() const
 {
     const double value = Line().At(mSampleTime);
-    return mChannelOffset - mScaling.MilliMeterAsYPixel(value, MilliMeterPerMilliVolt());
+    return mChannelOffset - mScaling.MilliVoltAsYPixel(value);
 }
 
 int DrawChannel::XPixel(MicroSecond sampleTime) const
 {
-    const double second = static_cast<double>(sampleTime) / 1000000.0;
-    return mScaling.MilliMeterAsXPixel(second, MilliMeterPerSecond());
+    return mScaling.MicroSecondAsXPixel(sampleTime);
 }
 
 bool DrawChannel::IsValidPoint() const
@@ -640,11 +736,31 @@ QPoint DrawChannel::Point() const
 MainView::MainView():
     QWidget(),
     mDataPtr(nullptr),
-    mRubberBandPtr(nullptr),
+    mMeasurePtr(new Measure(this)),
     mXZoomValue(0),
     mYZoomValue(0),
     mIsHighlightSamples(false)
 {
+    const PixelScaling & zs = ZoomScaling();
+    const int x = zs.MilliMeterAsXPixel(25);
+    const int y = zs.MilliMeterAsYPixel(10);
+    mMeasurePtr->move(x, y);
+    mMeasurePtr->resize(x, y);
+    mMeasurePtr->setMinimumSize(25, 25);
+}
+
+void MainView::ZoomIn()
+{
+    ++mXZoomValue;
+    ++mYZoomValue;
+    RebuildView();
+}
+
+void MainView::ZoomOut()
+{
+    --mXZoomValue;
+    --mYZoomValue;
+    RebuildView();
 }
 
 void MainView::XZoomIn()
@@ -698,11 +814,12 @@ void MainView::SetData(MainData & arg)
 
 void MainView::InitSize()
 {
+    const PixelScaling & zs = ZoomScaling();
     int minimumWidth = 0;
 
     for (int index = 0; index < ChannelCount(); ++index)
     {
-        DrawChannel channel(DataChannel(index), ZoomScaling());
+        DrawChannel channel(DataChannel(index), zs);
         const int channelWidth = channel.MinimumWidth();
 
         if (minimumWidth < channelWidth)
@@ -714,63 +831,36 @@ void MainView::InitSize()
     const int width = minimumWidth + 10;
     setMinimumWidth(width);
     resize(width, height());
-
-    qDebug("MainView::InitSize() width = %d", width);
 }
 
 void MainView::RebuildView()
 {
     InitSize();
     update();
+    UpdateMeasurement(mMeasurePtr->rect());
 }
 
-void MainView::mousePressEvent(QMouseEvent * eventPtr)
+void MainView::UpdateMeasurement(const QRect & rect)
 {
-    if (!mRubberBandPtr)
-    {
-        mRubberBandPtr = new QRubberBand(QRubberBand::Rectangle, this);
-    }
-
-    mOrigin = eventPtr->pos();
-    mRubberBandPtr->setGeometry(QRect(mOrigin, QSize()));
-    mRubberBandPtr->show();
+    const PixelScaling scale = ZoomScaling();
+    const MilliSecond ms = scale.XPixelAsMilliSecond(rect.width());
+    const MilliVolt mv = scale.YPixelAsMilliVolt(rect.height());
+    qDebug() << ms << "ms, " << mv << "mV";
 }
 
-void MainView::mouseMoveEvent(QMouseEvent * eventPtr)
+void MainView::mousePressEvent(QMouseEvent * evt)
 {
-    mRubberBandPtr->setGeometry(QRect(mOrigin, eventPtr->pos()).normalized());
+    QRect frame = mMeasurePtr->rect();
+    frame.moveCenter(evt->pos());
+    mMeasurePtr->move(frame.topLeft());
 }
 
-void MainView::mouseReleaseEvent(QMouseEvent * eventPtr)
-{
-    mRubberBandPtr->setGeometry(QRect(mOrigin, eventPtr->pos()).normalized());
-    const QRect rect = mRubberBandPtr->geometry();
-    mRubberBandPtr->hide();
-    PixelScaling scaling = ZoomScaling();
-    qDebug()
-        << "Selection: " << rect << "\n"
-        << "- width " << scaling.XPixelAsMilliMeter(rect.width()) << "mm\n"
-        << "- height " << scaling.YPixelAsMilliMeter(rect.height()) << "mm";
-
-    const double xmm = scaling.XPixelAsMilliMeter(rect.x());
-
-    for (int channelIndex = 0; channelIndex < ChannelCount(); ++channelIndex)
-    {
-#warning "TODO"
-        ///const AnyWave & wv = DataChannel(channelIndex);
-        ///const double samplePos =  xmm * static_cast<double>(wv.Info().sps) /
-        ///    static_cast<double>(wv.MilliMeterPerSecond());
-        ///const int sampleIndex = static_cast<int>(samplePos);
-        ///qDebug("channel %d: mv[%d] = %f",
-        ///        channelIndex, sampleIndex, wv.Sample(sampleIndex).MilliVolt());
-    }
-}
-
-void MainView::paintEvent(QPaintEvent *)
+void MainView::paintEvent(QPaintEvent * ptr)
 {
     DrawGrid grid(StandardScaling());
     grid.Draw(*this);
 
+    const PixelScaling & zs = ZoomScaling();
     const int count = ChannelCount();
     const int widgetHeight = height();
 
@@ -778,9 +868,9 @@ void MainView::paintEvent(QPaintEvent *)
     {
         const int channelHeight = widgetHeight / count;
         const int channelOffset = (index * channelHeight) + (channelHeight / 2);
-        DrawChannel channel(DataChannel(index), ZoomScaling());
+        DrawChannel channel(DataChannel(index), zs);
         channel.SetHighlightSamples(mIsHighlightSamples);
-        channel.Draw(*this, channelOffset);
+        channel.Draw(*this, ptr->rect(), channelOffset);
     }
 }
     
@@ -811,57 +901,59 @@ MainWindow::MainWindow()
     mScrollAreaPtr->setWidgetResizable(true);
     mScrollAreaPtr->setWidget(mMainViewPtr);
 
-    mMainWindow.setCentralWidget(mScrollAreaPtr);
-    mMainWindow.setWindowTitle(QString("no"));
-    mMainWindow.resize(600, 300);
+    setCentralWidget(mScrollAreaPtr);
+    setWindowTitle(QString("no"));
+    resize(600, 300);
+
+    mZoomInActionPtr = new QAction(QString("Zoom In"), this);
+    mZoomInActionPtr->setShortcut(QKeySequence(Qt::Key_Plus + Qt::KeypadModifier));
+    connect(mZoomInActionPtr, SIGNAL(triggered()), this, SLOT(ZoomIn()));
+
+    mZoomOutActionPtr = new QAction(QString("Zoom Out"), this);
+    mZoomOutActionPtr->setShortcut(QKeySequence(Qt::Key_Minus + Qt::KeypadModifier));
+    connect(mZoomOutActionPtr, SIGNAL(triggered()), this, SLOT(ZoomOut()));
 
     mXZoomInActionPtr = new QAction(QString("X-Zoom In"), this);
     mXZoomInActionPtr->setShortcut(QKeySequence(Qt::Key_X));
-    mXZoomInActionPtr->setEnabled(false);
     connect(mXZoomInActionPtr, SIGNAL(triggered()), this, SLOT(XZoomIn()));
 
     mXZoomOutActionPtr = new QAction(QString("X-Zoom Out"), this);
     mXZoomOutActionPtr->setShortcut(QKeySequence(Qt::SHIFT + Qt::Key_X));
-    mXZoomOutActionPtr->setEnabled(false);
     connect(mXZoomOutActionPtr, SIGNAL(triggered()), this, SLOT(XZoomOut()));
 
     mYZoomInActionPtr = new QAction(QString("Y-Zoom In"), this);
     mYZoomInActionPtr->setShortcut(QKeySequence(Qt::Key_Y));
-    mYZoomInActionPtr->setEnabled(false);
     connect(mYZoomInActionPtr, SIGNAL(triggered()), this, SLOT(YZoomIn()));
 
     mYZoomOutActionPtr = new QAction(QString("Y-Zoom Out"), this);
     mYZoomOutActionPtr->setShortcut(QKeySequence(Qt::SHIFT + Qt::Key_Y));
-    mYZoomOutActionPtr->setEnabled(false);
     connect(mYZoomOutActionPtr, SIGNAL(triggered()), this, SLOT(YZoomOut()));
 
     mZoomResetActionPtr = new QAction(QString("Reset Zoom"), this);
-    mZoomResetActionPtr->setShortcut(QKeySequence(Qt::Key_R));
-    mZoomResetActionPtr->setEnabled(false);
+    mZoomResetActionPtr->setShortcut(QKeySequence(Qt::Key_Equal));
     connect(mZoomResetActionPtr, SIGNAL(triggered()), this, SLOT(ResetZoom()));
 
     mHighlightSamplesActionPtr = new QAction(QString("Highlight &Samples"), this);
     mHighlightSamplesActionPtr->setShortcut(QKeySequence(Qt::Key_H));
-    mHighlightSamplesActionPtr->setEnabled(true);
     mHighlightSamplesActionPtr->setChecked(false);
     mHighlightSamplesActionPtr->setCheckable(true);
     connect(mHighlightSamplesActionPtr, SIGNAL(triggered()), this, SLOT(HighlightSamples()));
 
     mOpenActionPtr = new QAction(tr("&Open..."), this);
     mOpenActionPtr->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_O));
-    mOpenActionPtr->setEnabled(true);
     connect(mOpenActionPtr, SIGNAL(triggered()), this, SLOT(OpenFile()));
 
     mExitActionPtr = new QAction(tr("E&xit"), this);
     mExitActionPtr->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_Q));
-    mExitActionPtr->setEnabled(true);
     connect(mExitActionPtr, SIGNAL(triggered()), this, SLOT(ExitApplication()));
 
-    mFileMenuPtr = new QMenu(QString("&File"), &mMainWindow);
+    mFileMenuPtr = menuBar()->addMenu(tr("&File"));
     mFileMenuPtr->addAction(mOpenActionPtr);
     mFileMenuPtr->addAction(mExitActionPtr);
 
-    mViewMenuPtr = new QMenu(QString("&View"), &mMainWindow);
+    mViewMenuPtr = menuBar()->addMenu(tr("&View"));
+    mViewMenuPtr->addAction(mZoomInActionPtr);
+    mViewMenuPtr->addAction(mZoomOutActionPtr);
     mViewMenuPtr->addAction(mXZoomInActionPtr);
     mViewMenuPtr->addAction(mXZoomOutActionPtr);
     mViewMenuPtr->addAction(mYZoomInActionPtr);
@@ -869,9 +961,20 @@ MainWindow::MainWindow()
     mViewMenuPtr->addAction(mZoomResetActionPtr);
     mViewMenuPtr->addSeparator();
     mViewMenuPtr->addAction(mHighlightSamplesActionPtr);
-
-    mMainWindow.menuBar()->addMenu(mFileMenuPtr);
-    mMainWindow.menuBar()->addMenu(mViewMenuPtr);
+    
+    // adding all actions to QMainWindow solves issue
+    // "keyboard shortcuts not working on ubuntu 14.04":
+    // https://bugs.launchpad.net/ubuntu/+source/appmenu-qt5/+bug/1313248
+    addAction(mOpenActionPtr);
+    addAction(mExitActionPtr);
+    addAction(mZoomInActionPtr);
+    addAction(mZoomOutActionPtr);
+    addAction(mXZoomInActionPtr);
+    addAction(mXZoomOutActionPtr);
+    addAction(mYZoomInActionPtr);
+    addAction(mYZoomOutActionPtr);
+    addAction(mZoomResetActionPtr);
+    addAction(mHighlightSamplesActionPtr);
 }
 
 void MainWindow::OpenFile(const QString & file)
@@ -882,32 +985,37 @@ void MainWindow::OpenFile(const QString & file)
 void MainWindow::SetData(MainData & data)
 {
     mMainViewPtr->SetData(data);
-    UpdateActions();
-    mMainWindow.show();
+    show();
+}
+
+void MainWindow::ZoomIn()
+{
+    mMainViewPtr->ZoomIn();
+}
+
+void MainWindow::ZoomOut()
+{
+    mMainViewPtr->ZoomOut();
 }
 
 void MainWindow::XZoomIn()
 {
     mMainViewPtr->XZoomIn();
-    UpdateActions();
 }
 
 void MainWindow::XZoomOut()
 {
     mMainViewPtr->XZoomOut();
-    UpdateActions();
 }
 
 void MainWindow::YZoomIn()
 {
     mMainViewPtr->YZoomIn();
-    UpdateActions();
 }
 
 void MainWindow::YZoomOut()
 {
     mMainViewPtr->YZoomOut();
-    UpdateActions();
 }
 
 void MainWindow::SetHighlightSamples(bool isTrue)
@@ -919,39 +1027,22 @@ void MainWindow::SetHighlightSamples(bool isTrue)
 void MainWindow::HighlightSamples()
 {
     SetHighlightSamples(mHighlightSamplesActionPtr->isChecked());
-    UpdateActions();
 }
 
 void MainWindow::ResetZoom()
 {
     mMainViewPtr->ResetZoom();
-    UpdateActions();
 }
 
 void MainWindow::ExitApplication()
 {
-    mMainWindow.close();
+    close();
 }
 
 void MainWindow::OpenFile()
 {
-    OpenFile(QFileDialog::getOpenFileName(
-                &mMainWindow,
-                QString("Open File"),
+    OpenFile(QFileDialog::getOpenFileName(this, QString("Open File"),
                 QDir::currentPath()));
-}
-
-void MainWindow::UpdateView()
-{
-}
-
-void MainWindow::UpdateActions()
-{
-    mXZoomInActionPtr->setEnabled(true);
-    mXZoomOutActionPtr->setEnabled(true);
-    mYZoomInActionPtr->setEnabled(true);
-    mYZoomOutActionPtr->setEnabled(true);
-    mZoomResetActionPtr->setEnabled(true);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
