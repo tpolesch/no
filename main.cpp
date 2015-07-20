@@ -370,14 +370,14 @@ class Measure;
 class MainView : public QWidget
 {
 public:
-    MainView();
+    explicit MainView(QStatusBar * ptr);
     void ZoomIn();
     void ZoomOut();
     void XZoomIn();
     void XZoomOut();
     void YZoomIn();
     void YZoomOut();
-    void ResetZoom();
+    void Unzoom();
     void SetHighlightSamples(bool isTrue);
     void SetData(MainData & arg);
     void OpenFile(const QString & fileName);
@@ -393,6 +393,7 @@ private:
     int ChannelCount() const {return mDataPtr->Channels().count();}
     const ChannelData & DataChannel(int index) {return mDataPtr->Channels()[index];}
 
+    QStatusBar * mStatus;
     MainData * mDataPtr;
     Measure * mMeasurePtr;
     int mXZoomValue;
@@ -733,8 +734,9 @@ QPoint DrawChannel::Point() const
 // class MainView
 ////////////////////////////////////////////////////////////////////////////////
 
-MainView::MainView():
+MainView::MainView(QStatusBar * status):
     QWidget(),
+    mStatus(status),
     mDataPtr(nullptr),
     mMeasurePtr(new Measure(this)),
     mXZoomValue(0),
@@ -787,7 +789,7 @@ void MainView::YZoomOut()
     RebuildView();
 }
 
-void MainView::ResetZoom()
+void MainView::Unzoom()
 {
     mXZoomValue = 0;
     mYZoomValue = 0;
@@ -845,7 +847,9 @@ void MainView::UpdateMeasurement(const QRect & rect)
     const PixelScaling scale = ZoomScaling();
     const MilliSecond ms = scale.XPixelAsMilliSecond(rect.width());
     const MilliVolt mv = scale.YPixelAsMilliVolt(rect.height());
-    qDebug() << ms << "ms, " << mv << "mV";
+    QString txt = QString("%1ms, %2mV").arg(ms).arg(mv);
+    mStatus->showMessage(txt);
+
 }
 
 void MainView::mousePressEvent(QMouseEvent * evt)
@@ -890,7 +894,7 @@ PixelScaling MainView::StandardScaling() const
 
 MainWindow::MainWindow()
 {
-    mMainViewPtr = new MainView();
+    mMainViewPtr = new MainView(statusBar());
     mMainViewPtr->setBackgroundRole(QPalette::Base);
     mMainViewPtr->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 
@@ -929,9 +933,9 @@ MainWindow::MainWindow()
     mYZoomOutActionPtr->setShortcut(QKeySequence(Qt::SHIFT + Qt::Key_Y));
     connect(mYZoomOutActionPtr, SIGNAL(triggered()), this, SLOT(YZoomOut()));
 
-    mZoomResetActionPtr = new QAction(QString("Reset Zoom"), this);
-    mZoomResetActionPtr->setShortcut(QKeySequence(Qt::Key_Equal));
-    connect(mZoomResetActionPtr, SIGNAL(triggered()), this, SLOT(ResetZoom()));
+    mUnzoomActionPtr = new QAction(QString("Unzoom"), this);
+    mUnzoomActionPtr->setShortcut(QKeySequence(Qt::Key_U));
+    connect(mUnzoomActionPtr, SIGNAL(triggered()), this, SLOT(Unzoom()));
 
     mHighlightSamplesActionPtr = new QAction(QString("Highlight &Samples"), this);
     mHighlightSamplesActionPtr->setShortcut(QKeySequence(Qt::Key_H));
@@ -940,15 +944,20 @@ MainWindow::MainWindow()
     connect(mHighlightSamplesActionPtr, SIGNAL(triggered()), this, SLOT(HighlightSamples()));
 
     mOpenActionPtr = new QAction(tr("&Open..."), this);
-    mOpenActionPtr->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_O));
+    mOpenActionPtr->setShortcut(QKeySequence::Open);
     connect(mOpenActionPtr, SIGNAL(triggered()), this, SLOT(OpenFile()));
 
+    mReloadActionPtr = new QAction(tr("&Reload"), this);
+    mReloadActionPtr->setShortcut(QKeySequence(Qt::Key_R));
+    connect(mReloadActionPtr, SIGNAL(triggered()), this, SLOT(ReloadFile()));
+
     mExitActionPtr = new QAction(tr("E&xit"), this);
-    mExitActionPtr->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_Q));
+    mExitActionPtr->setShortcut(QKeySequence::Quit);
     connect(mExitActionPtr, SIGNAL(triggered()), this, SLOT(ExitApplication()));
 
     mFileMenuPtr = menuBar()->addMenu(tr("&File"));
     mFileMenuPtr->addAction(mOpenActionPtr);
+    mFileMenuPtr->addAction(mReloadActionPtr);
     mFileMenuPtr->addAction(mExitActionPtr);
 
     mViewMenuPtr = menuBar()->addMenu(tr("&View"));
@@ -958,7 +967,7 @@ MainWindow::MainWindow()
     mViewMenuPtr->addAction(mXZoomOutActionPtr);
     mViewMenuPtr->addAction(mYZoomInActionPtr);
     mViewMenuPtr->addAction(mYZoomOutActionPtr);
-    mViewMenuPtr->addAction(mZoomResetActionPtr);
+    mViewMenuPtr->addAction(mUnzoomActionPtr);
     mViewMenuPtr->addSeparator();
     mViewMenuPtr->addAction(mHighlightSamplesActionPtr);
     
@@ -966,6 +975,7 @@ MainWindow::MainWindow()
     // "keyboard shortcuts not working on ubuntu 14.04":
     // https://bugs.launchpad.net/ubuntu/+source/appmenu-qt5/+bug/1313248
     addAction(mOpenActionPtr);
+    addAction(mReloadActionPtr);
     addAction(mExitActionPtr);
     addAction(mZoomInActionPtr);
     addAction(mZoomOutActionPtr);
@@ -973,13 +983,20 @@ MainWindow::MainWindow()
     addAction(mXZoomOutActionPtr);
     addAction(mYZoomInActionPtr);
     addAction(mYZoomOutActionPtr);
-    addAction(mZoomResetActionPtr);
+    addAction(mUnzoomActionPtr);
     addAction(mHighlightSamplesActionPtr);
+}
+
+void MainWindow::ReloadFile()
+{
+    mMainViewPtr->OpenFile(mInfoFile);
+    setWindowTitle(QString("no: ") + mInfoFile);
 }
 
 void MainWindow::OpenFile(const QString & file)
 {
-    mMainViewPtr->OpenFile(file);
+    mInfoFile = file;
+    ReloadFile();
 }
 
 void MainWindow::SetData(MainData & data)
@@ -1029,9 +1046,9 @@ void MainWindow::HighlightSamples()
     SetHighlightSamples(mHighlightSamplesActionPtr->isChecked());
 }
 
-void MainWindow::ResetZoom()
+void MainWindow::Unzoom()
 {
-    mMainViewPtr->ResetZoom();
+    mMainViewPtr->Unzoom();
 }
 
 void MainWindow::ExitApplication()
