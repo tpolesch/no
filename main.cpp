@@ -17,10 +17,10 @@ inline static MicroSecond FromMilliSec(IntType ms)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// InfoLine
+// DataFile
 ////////////////////////////////////////////////////////////////////////////////
 
-class InfoLine
+class DataFile
 {
 private:
     unsigned int mErrors;
@@ -30,7 +30,7 @@ private:
     MicroSecond mSamplePeriod;
     double mDivisor;
     double mSampleGain;
-    QString mLine;
+    QString mTxt;
     QString mOperator;
     QString mFileName;
     QString mUnit;
@@ -39,7 +39,7 @@ private:
     MilliVolt mMax;
     QList<MilliVolt> mValues;
 public:
-    explicit InfoLine(const QString & txt):
+    explicit DataFile(const QString & txt, const QString & path):
         mErrors(0),
         mSampleMask(0xffffu),
         mSampleOffset(0),
@@ -47,7 +47,7 @@ public:
         mSamplePeriod(0),
         mDivisor(1.0),
         mSampleGain(1.0),
-        mLine(txt),
+        mTxt(txt),
         mOperator(""),
         mFileName(""),
         mUnit(""),
@@ -57,7 +57,7 @@ public:
         mValues()
     {
         Parse();
-        if (mFileName.size() > 0) {SetSamples();}
+        if (mFileName.size() > 0) {SetSamples(path);}
     }
 
     MilliVolt Min() const {return mMin;}
@@ -91,7 +91,7 @@ public:
         return (mOperator == arg);
     }
 
-    void Minus(const InfoLine & other)
+    void Minus(const DataFile & other)
     {
         QList<double> result;
 
@@ -107,12 +107,14 @@ public:
         mSignalDelay = 0;
     }
 private:
-    void SetSamples()
+    void SetSamples(const QString & path)
     {
-        QFile read(mFileName);
+        const QString fullName = path + mFileName;
+        QFile read(fullName);
 
         if (!read.open(QIODevice::ReadOnly))
         {
+            qDebug() << "Could not open:" << fullName;
             AddError();
             return;
         }
@@ -136,15 +138,15 @@ private:
 
     void Parse()
     {
-        if (!QRegularExpression("^[>+-]").match(mLine).hasMatch())
+        if (!QRegularExpression("^[>+-]").match(mTxt).hasMatch())
         {
-            mLine = "> " + mLine;
+            mTxt = "> " + mTxt;
         }
 
         int optPos = -1;
         bool isValid = true;
         QRegularExpression re("^([>+-])\\s*(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s*");
-        QRegularExpressionMatch match = re.match(mLine);
+        QRegularExpressionMatch match = re.match(mTxt);
 
         if (match.hasMatch())
         {
@@ -183,7 +185,7 @@ private:
     {
         const QString pattern = key + QString("[=\\s](\\S+)");
         QRegularExpression re(pattern);
-        QRegularExpressionMatch match = re.match(mLine, startPos);
+        QRegularExpressionMatch match = re.match(mTxt, startPos);
 
         if (match.hasMatch())
         {
@@ -198,45 +200,45 @@ private:
     void AddError()
     {
         ++mErrors;
-        qDebug() << "Could not parse: " << qPrintable(mLine);
+        qDebug() << "Could not parse: " << qPrintable(mTxt);
     }
 };
 
-TEST(InfoLine, Parse)
+TEST(DataFile, Parse)
 {
-    EXPECT_TRUE(InfoLine("wave.dat 500 1 mV X").IsValid());
-    EXPECT_TRUE(InfoLine("wave.dat 500 1.0 mV X").IsValid());
-    EXPECT_FALSE(InfoLine("wave.dat 500 1 mV ").IsValid()); // label missing
-    EXPECT_FALSE(InfoLine("wave.dat 500 D mV X").IsValid()); // divisor wrong
-    EXPECT_FALSE(InfoLine("wave.dat 500.0 1 mV X").IsValid()); // sps wrong
+    EXPECT_TRUE(DataFile("wave.dat 500 1 mV X", "").IsValid());
+    EXPECT_TRUE(DataFile("wave.dat 500 1.0 mV X", "").IsValid());
+    EXPECT_FALSE(DataFile("wave.dat 500 1 mV ", "").IsValid()); // label missing
+    EXPECT_FALSE(DataFile("wave.dat 500 D mV X", "").IsValid()); // divisor wrong
+    EXPECT_FALSE(DataFile("wave.dat 500.0 1 mV X", "").IsValid()); // sps wrong
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// class ChannelData
+// class DataChannel
 ////////////////////////////////////////////////////////////////////////////////
 
-class ChannelData
+class DataChannel
 {
 private:
     MilliVolt mMin;
     MilliVolt mMax;
     MicroSecond mDuration;
-    QList<InfoLine> mLines;
+    QList<DataFile> mFiles;
 public:
-    void Plus(InfoLine & line)
+    void Plus(DataFile & file)
     {
-        mLines.append(line);
+        mFiles.append(file);
     }
 
-    void Minus(InfoLine & line)
+    void Minus(DataFile & file)
     {
-        const int index = mLines.count() - 1;
-        mLines[index].Minus(line);
+        const int index = mFiles.count() - 1;
+        mFiles[index].Minus(file);
     }
 
     void SetComplete()
     {
-        if (mLines.count() < 1)
+        if (mFiles.count() < 1)
         {
             mMin = 0;
             mMax = 0;
@@ -244,21 +246,21 @@ public:
             return;
         }
 
-        mMin = mLines[0].Min();
-        mMax = mLines[0].Max();
-        mDuration = mLines[0].Duration();
+        mMin = mFiles[0].Min();
+        mMax = mFiles[0].Max();
+        mDuration = mFiles[0].Duration();
 
-        for (auto & line:mLines)
+        for (auto & file:mFiles)
         {
-            if (mMin > line.Min()) {mMin = line.Min();}
-            if (mMax < line.Max()) {mMax = line.Max();}
-            if (mDuration < line.Duration()) {mDuration = line.Duration();}
+            if (mMin > file.Min()) {mMin = file.Min();}
+            if (mMax < file.Max()) {mMax = file.Max();}
+            if (mDuration < file.Duration()) {mDuration = file.Duration();}
         }
     }
     
-    const QList<InfoLine> & Lines() const
+    const QList<DataFile> & Files() const
     {
-       return mLines;
+       return mFiles;
     }
 
     MilliVolt Min() const {return mMin;}
@@ -267,40 +269,41 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-// class MainData
+// class DataMain
 ////////////////////////////////////////////////////////////////////////////////
 
-class MainData
+class DataMain
 {
 private:
-    QList<ChannelData> mChannels;
+    QList<DataChannel> mChannels;
     MicroSecond mDuration;
 public:
-    explicit MainData(const QString & name)
+    explicit DataMain(const QString & infoName)
     {
-        QFile file(name);
+        QFile info(infoName);
 
-        if (!file.open(QIODevice::ReadOnly))
+        if (!info.open(QIODevice::ReadOnly))
         {
-            QMessageBox::information(0, "error", file.errorString());
+            QMessageBox::information(0, "error", info.errorString());
             return;
         }
 
-        QTextStream in(&file);
-        QList<InfoLine> lines;
+        const QString path = QFileInfo(info).path() + "/";
+        QTextStream in(&info);
+        QList<DataFile> fileList;
 
         while (!in.atEnd())
         {
-            lines.append(InfoLine(in.readLine()));
+            fileList.append(DataFile(in.readLine(), path));
         }
         
-        for (auto & line:lines)
+        for (auto & file:fileList)
         {
-            if (line.IsValid())
+            if (file.IsValid())
             {
-                if (line.IsOperator(">")) New(line);
-                if (line.IsOperator("+")) Plus(line);
-                if (line.IsOperator("-")) Minus(line);
+                if (file.IsOperator(">")) New(file);
+                if (file.IsOperator("+")) Plus(file);
+                if (file.IsOperator("-")) Minus(file);
             }
         }
 
@@ -315,28 +318,28 @@ public:
     
     MicroSecond Duration() const {return mDuration;}
 
-    const QList<ChannelData> & Channels() const
+    const QList<DataChannel> & Channels() const
     {
        return mChannels;
     }
 private:
-    void New(InfoLine & line)
+    void New(DataFile & file)
     {
-        ChannelData data;
+        DataChannel data;
         mChannels.append(data);
-        Plus(line);
+        Plus(file);
     }
 
-    void Plus(InfoLine & line)
+    void Plus(DataFile & file)
     {
         const int index = mChannels.count() - 1;
-        mChannels[index].Plus(line);
+        mChannels[index].Plus(file);
     }
 
-    void Minus(InfoLine & line)
+    void Minus(DataFile & file)
     {
         const int index = mChannels.count() - 1;
-        mChannels[index].Minus(line);
+        mChannels[index].Minus(file);
     }
 };
 
@@ -375,7 +378,7 @@ private:
 class DrawChannel
 {
 public:
-    explicit DrawChannel(const ChannelData & wave, const PixelScaling & scaling,
+    explicit DrawChannel(const DataChannel & data, const PixelScaling & scaling,
             MicroSecond tmOffset, int ypxOffset);
     void SetHighlightSamples(bool isTrue) {mIsHighlightSamples = isTrue;}
     void Draw(QWidget & parent, const QRect & rect);
@@ -383,24 +386,24 @@ private:
     void DrawSamples(QPainter & painter, const QRect & rect);
     bool IsValidPoint() const;
     QPoint Point() const;
-    const InfoLine & Line() const {return mData.Lines()[mLineIndex];}
+    const DataFile & File() const {return mData.Files()[mFileIndex];}
 
     const PixelScaling & mScaling;
-    const ChannelData & mData;
+    const DataChannel & mData;
     const int mYPixelOffset;
     const MicroSecond mTimeOffset;
     MicroSecond mSampleTime;
-    int mLineIndex;
+    int mFileIndex;
     bool mIsHighlightSamples;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
 
-class Measure : public QWidget
+class GuiMeasure : public QWidget
 {
     Q_OBJECT
 public:
-    Measure(QWidget * parent):
+    GuiMeasure(QWidget * parent):
         QWidget(parent)
     {
         QPalette pal = palette();
@@ -451,7 +454,7 @@ public:
     bool IsShowHelp() const {return mIsShowHelp;}
     const QStringList & Files() const {return mFiles;}
 private:
-    void ParseLine(const QString & line);
+    void ParseLine(const QString & file);
     bool mIsInvalid;
     bool mIsUnitTest;
     bool mIsHighlightSamples;
@@ -550,14 +553,14 @@ MilliVolt PixelScaling::YPixelAsMilliVolt(int px) const
 // class DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
 
-DrawChannel::DrawChannel(const ChannelData & data, const PixelScaling & scaling,
+DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scaling,
         MicroSecond tmOffset, int ypxOffset):
     mScaling(scaling),
     mData(data),
     mYPixelOffset(ypxOffset),
     mTimeOffset(tmOffset),
     mSampleTime(0),
-    mLineIndex(0),
+    mFileIndex(0),
     mIsHighlightSamples(false)
 {
 }
@@ -583,11 +586,11 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
     const MicroSecond drawEnd = mScaling.XPixelAsMicroSecond(rect.right());
     const MicroSecond pixelPeriod = mScaling.XPixelAsMicroSecond(1);
 
-    for (mLineIndex = 0; mLineIndex < mData.Lines().count(); ++mLineIndex)
+    for (mFileIndex = 0; mFileIndex < mData.Files().count(); ++mFileIndex)
     {
-        const MicroSecond samplePeriod = Line().SamplePeriod();
+        const MicroSecond samplePeriod = File().SamplePeriod();
         MicroSecond begin = 0;
-        MicroSecond end = Line().Duration();
+        MicroSecond end = File().Duration();
 
         if (begin < drawBegin)
         {
@@ -633,12 +636,12 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 
 bool DrawChannel::IsValidPoint() const
 {
-    return !isnan(Line().At(mTimeOffset + mSampleTime));
+    return !isnan(File().At(mTimeOffset + mSampleTime));
 }
 
 QPoint DrawChannel::Point() const
 {
-    const double value = Line().At(mTimeOffset + mSampleTime);
+    const double value = File().At(mTimeOffset + mSampleTime);
     const int y = mYPixelOffset - mScaling.MilliVoltAsYPixel(value);
     const int x = mScaling.MicroSecondAsXPixel(mSampleTime);
     return QPoint(x, y);
@@ -751,21 +754,21 @@ class GuiWave : public QWidget
 {
     Q_OBJECT
 public:
-    explicit GuiWave(QWidget * parent, const ChannelData & data, const GuiSetup & setup):
+    explicit GuiWave(QWidget * parent, const DataChannel & data, const GuiSetup & setup):
         QWidget(parent),
         mData(data),
         mSetup(setup),
-        mMeasure(new Measure(this)),
+        mMeasure(new GuiMeasure(this)),
         mTimeOffset(0)
     {
         const PixelScaling scale = mSetup.Scaling();
-        setMinimumHeight(scale.MilliVoltAsYPixel(data.Max() - data.Min()));
         const int x = scale.MilliMeterAsXPixel(25);
         const int y = scale.MilliMeterAsYPixel(10);
         mMeasure->move(x, y);
         mMeasure->resize(x, y);
         mMeasure->setMinimumSize(25, 25);
         connect(mMeasure, SIGNAL(SignalRecalculate()), this, SLOT(UpdateMeasurement()));
+        Rebuild();
     }
 
     void SetTimeOffset(MicroSecond offset)
@@ -776,8 +779,10 @@ public:
     
     void Rebuild()
     {
-        update();
+        const PixelScaling scale = mSetup.Scaling();
+        setMinimumHeight(scale.MilliVoltAsYPixel(mData.Max() - mData.Min()));
         UpdateMeasurement();
+        update();
     }
 signals:
     void SignalResize();
@@ -791,9 +796,9 @@ private slots:
         qDebug() << txt;
     }
 private:
-    const ChannelData & mData;
+    const DataChannel & mData;
     const GuiSetup & mSetup;
-    Measure * mMeasure;
+    GuiMeasure * mMeasure;
     MicroSecond mTimeOffset;
 
     void mousePressEvent(QMouseEvent * evt) override
@@ -820,12 +825,12 @@ private:
     }
 };
 
-class GuiSingleChannel : public QScrollArea
+class GuiChannel : public QScrollArea
 {
 private:
     GuiWave * mWave;
 public:
-    GuiSingleChannel(QWidget * parent, const ChannelData & data, const GuiSetup & setup):
+    GuiChannel(QWidget * parent, const DataChannel & data, const GuiSetup & setup):
         QScrollArea(parent),
         mWave(new GuiWave(this, data, setup))
     {
@@ -840,14 +845,14 @@ public:
     }
 };
 
-class GuiMultiChannel : public QWidget
+class GuiMain : public QWidget
 {
     Q_OBJECT
 private:
     const GuiSetup & mSetup;    
-    const MainData & mData;
+    const DataMain & mData;
     QScrollBar * mScroll;
-    QList<GuiSingleChannel *> mChannels;
+    QList<GuiChannel *> mChannels;
 private slots:
     void MoveTimeBar(int)
     {
@@ -863,16 +868,20 @@ private slots:
     {
         if (mChannels.count() < 1) return;
         const PixelScaling scale = mSetup.Scaling();
-        const int page = mChannels[0]->Wave()->width();
-        const int end = scale.MicroSecondAsXPixel(mData.Duration());
-        const int max = end - page;
+        int page = mChannels[0]->Wave()->width();
+        if (page < 2) {page = 2;}
+        int end = scale.MicroSecondAsXPixel(mData.Duration());
+        if (end < 2) {end = 2;}
+        int max = end - page;
+        if (max < 0) {max = 0;}
         mScroll->setValue(0);
         mScroll->setMinimum(0);
-        mScroll->setMaximum((max < 0) ? 0 : max);
+        mScroll->setMaximum(max);
         mScroll->setPageStep(page);
+        mScroll->setSingleStep(page / 2);
     }
 public:
-    GuiMultiChannel(QWidget * parent, const GuiSetup & setup, const MainData & data):
+    GuiMain(QWidget * parent, const GuiSetup & setup, const DataMain & data):
         QWidget(parent),
         mSetup(setup),
         mData(data),
@@ -883,7 +892,7 @@ public:
         bool isResizeConnected = false;
         for (auto & chan:mData.Channels())
         {
-            GuiSingleChannel * gui = new GuiSingleChannel(this, chan, mSetup);
+            GuiChannel * gui = new GuiChannel(this, chan, mSetup);
             layout->addWidget(gui);
             mChannels.append(gui);
 
@@ -905,15 +914,15 @@ public:
     }
 };
 
-class GuiMain : public QMainWindow
+class MainWindow : public QMainWindow
 {
     Q_OBJECT
 private:
     GuiSetup mSetup;
-    MainData * mData;
-    GuiMultiChannel * mChannels;
+    DataMain * mData;
+    GuiMain * mGui;
 
-    void Rebuild() {if (mChannels) {mChannels->Rebuild();}}
+    void Rebuild() {if (mGui) {mGui->Rebuild();}}
 private slots:
     void Open()     {Open(QFileDialog::getOpenFileName(this, QString("Open"), QDir::currentPath()));}
     void Reload()   {Open(mSetup.fileName);}
@@ -927,10 +936,10 @@ private slots:
     void YZoomOut() {mSetup.yzoom--; Rebuild();}
     void Points(bool arg) {mSetup.drawPoints = arg; Rebuild();}
 public:
-    GuiMain():
+    MainWindow():
         mSetup(),
         mData(nullptr),
-        mChannels(nullptr)
+        mGui(nullptr)
     {
         setWindowTitle(QString("no"));
         resize(600, 300);
@@ -956,7 +965,7 @@ public:
         ACTION(viewMenu, "X-Zoom-Out", XZoomOut, Qt::Key_X + Qt::SHIFT);
         ACTION(viewMenu, "Y-Zoom-In", YZoomIn, Qt::Key_Y);
         ACTION(viewMenu, "Y-Zoom-Out", YZoomOut, Qt::Key_Y + Qt::SHIFT);
-        ACTION(viewMenu, "&Highlight Samples", HighlightSamples, Qt::Key_H);
+#undef ACTION
         QAction * points = new QAction(tr("&Draw Points"), this);
         points->setShortcut(QKeySequence(Qt::Key_P));
         points->setChecked(mSetup.drawPoints);
@@ -964,23 +973,23 @@ public:
         connect(points, SIGNAL(triggered(bool)), this, SLOT(Points(bool)));
         viewMenu->addAction(points);
         addAction(points);
-#undef ACTION
     }
 
-    ~GuiMain()
+    ~MainWindow()
     {
-        delete mChannels;
+        delete mGui;
         delete mData;
     }
 
     void Open(QString name)
     {
-        delete mChannels;
+        delete mGui;
         delete mData;
         mSetup.fileName = name;
-        mData = new MainData(name);
-        mChannels = new GuiMultiChannel(this, mSetup, *mData);
-        setCentralWidget(mChannels);
+        mData = new DataMain(name);
+        mGui = new GuiMain(this, mSetup, *mData);
+        setCentralWidget(mGui);
+        setWindowTitle(name);
     }
 };
 
@@ -1001,7 +1010,7 @@ int main(int argc, char * argv[])
         return LightTest::RunTests(argc, argv);
     }
 
-    GuiMain win;
+    MainWindow win;
 
     if (arguments.Files().count() > 0)
     {
