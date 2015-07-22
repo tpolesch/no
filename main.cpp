@@ -1,5 +1,4 @@
 
-#include "MainWindow.h"
 #include <QtWidgets>
 #include <QDebug>
 #include <util/LightTestImplementation.h>
