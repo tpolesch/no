@@ -36,7 +36,9 @@ private:
     QString mFileName;
     QString mUnit;
     QString mLabel;
-    QList<double> mValues;
+    MilliVolt mMin;
+    MilliVolt mMax;
+    QList<MilliVolt> mValues;
 public:
     explicit InfoLine(const QString & txt):
         mErrors(0),
@@ -51,11 +53,16 @@ public:
         mFileName(""),
         mUnit(""),
         mLabel(""),
+        mMin(NAN),
+        mMax(NAN),
         mValues()
     {
         Parse();
         if (mFileName.size() > 0) {SetSamples();}
     }
+
+    MilliVolt Min() const {return mMin;}
+    MilliVolt Max() const {return mMax;}
     
     MicroSecond SamplePeriod() const
     {
@@ -119,7 +126,10 @@ private:
             quint16 sample;
             stream >> sample;
             const int lsb = (sample & mSampleMask) - mSampleOffset;
-            mValues.append(mSampleGain * lsb);
+            const MilliVolt mv = mSampleGain * lsb;
+            if (isnan(mMin) || (mMin > mv)) {mMin = mv;}
+            if (isnan(mMax) || (mMax < mv)) {mMax = mv;}
+            mValues.append(mv);
         }
 
         read.close();
@@ -209,6 +219,9 @@ TEST(InfoLine, Parse)
 class ChannelData
 {
 private:
+    MilliVolt mMin;
+    MilliVolt mMax;
+    MicroSecond mDuration;
     QList<InfoLine> mLines;
 public:
     void Plus(InfoLine & line)
@@ -221,11 +234,37 @@ public:
         const int index = mLines.count() - 1;
         mLines[index].Minus(line);
     }
+
+    void SetComplete()
+    {
+        if (mLines.count() < 1)
+        {
+            mMin = 0;
+            mMax = 0;
+            mDuration = 0;
+            return;
+        }
+
+        mMin = mLines[0].Min();
+        mMax = mLines[0].Max();
+        mDuration = mLines[0].Duration();
+
+        for (auto & line:mLines)
+        {
+            if (mMin > line.Min()) {mMin = line.Min();}
+            if (mMax < line.Max()) {mMax = line.Max();}
+            if (mDuration < line.Duration()) {mDuration = line.Duration();}
+        }
+    }
     
     const QList<InfoLine> & Lines() const
     {
        return mLines;
     }
+
+    MilliVolt Min() const {return mMin;}
+    MilliVolt Max() const {return mMax;}
+    MicroSecond Duration() const {return mDuration;}
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -236,10 +275,10 @@ class MainData
 {
 private:
     QList<ChannelData> mChannels;
+    MicroSecond mDuration;
 public:
-    void OpenFile(const QString & name)
+    explicit MainData(const QString & name)
     {
-        mChannels.clear();
         QFile file(name);
 
         if (!file.open(QIODevice::ReadOnly))
@@ -265,7 +304,17 @@ public:
                 if (line.IsOperator("-")) Minus(line);
             }
         }
+
+        mDuration = 0;
+        
+        for (auto & chan:mChannels)
+        {
+            chan.SetComplete();
+            if (mDuration < chan.Duration()) {mDuration = chan.Duration();}
+        }
     }
+    
+    MicroSecond Duration() const {return mDuration;}
 
     const QList<ChannelData> & Channels() const
     {
@@ -321,44 +370,26 @@ private:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-// DrawGrid
-////////////////////////////////////////////////////////////////////////////////
-
-class DrawGrid
-{
-public:
-    explicit DrawGrid(const PixelScaling & scaling);
-    void Draw(QWidget & parent);
-private:
-    void DrawTimeGrid(QWidget & parent);
-    void DrawValueGrid(QWidget & parent);
-
-    const PixelScaling & mScaling;
-};
-
-////////////////////////////////////////////////////////////////////////////////
 // DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
 
 class DrawChannel
 {
 public:
-    explicit DrawChannel(const ChannelData & wave, const PixelScaling & scaling);
+    explicit DrawChannel(const ChannelData & wave, const PixelScaling & scaling,
+            MicroSecond tmOffset, int ypxOffset);
     void SetHighlightSamples(bool isTrue) {mIsHighlightSamples = isTrue;}
-    void Draw(QWidget & parent, const QRect & rect, int offset);
-    int MinimumWidth() const;
+    void Draw(QWidget & parent, const QRect & rect);
 private:
     void DrawSamples(QPainter & painter, const QRect & rect);
-    int YPixel() const;
-    int XPixel() const {return XPixel(mSampleTime);}
-    int XPixel(MicroSecond sampleTime) const;
     bool IsValidPoint() const;
     QPoint Point() const;
     const InfoLine & Line() const {return mData.Lines()[mLineIndex];}
 
     const PixelScaling & mScaling;
     const ChannelData & mData;
-    int mChannelOffset;
+    const int mYPixelOffset;
+    const MicroSecond mTimeOffset;
     MicroSecond mSampleTime;
     int mLineIndex;
     bool mIsHighlightSamples;
@@ -366,49 +397,12 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////////
 
-class Measure;
-class MainView : public QWidget
-{
-public:
-    explicit MainView(QStatusBar * ptr);
-    void ZoomIn();
-    void ZoomOut();
-    void XZoomIn();
-    void XZoomOut();
-    void YZoomIn();
-    void YZoomOut();
-    void Unzoom();
-    void SetHighlightSamples(bool isTrue);
-    void SetData(MainData & arg);
-    void OpenFile(const QString & fileName);
-    void UpdateMeasurement(const QRect & rect);
-protected:
-    void paintEvent(QPaintEvent *);
-    void mousePressEvent(QMouseEvent *);
-private:
-    void InitSize();
-    void RebuildView();
-    PixelScaling ZoomScaling() const;
-    PixelScaling StandardScaling() const;
-    int ChannelCount() const {return mDataPtr->Channels().count();}
-    const ChannelData & DataChannel(int index) {return mDataPtr->Channels()[index];}
-
-    QStatusBar * mStatus;
-    MainData * mDataPtr;
-    Measure * mMeasurePtr;
-    int mXZoomValue;
-    int mYZoomValue;
-    bool mIsHighlightSamples;
-};
-
-////////////////////////////////////////////////////////////////////////////////
-
 class Measure : public QWidget
 {
+    Q_OBJECT
 public:
-    Measure(MainView * parent):
-        QWidget(parent),
-        mParent(parent)
+    Measure(QWidget * parent):
+        QWidget(parent)
     {
         QPalette pal = palette();
         pal.setBrush(QPalette::Window, QColor(0, 0, 0, 50) );
@@ -421,30 +415,26 @@ public:
         QSizeGrip * grip = new QSizeGrip(this);
         layout->addWidget(grip, 0, Qt::AlignRight | Qt::AlignBottom);
     }
+signals:
+    void SignalRecalculate();
 private:
-    void mousePressEvent(QMouseEvent *evt)
+    void mousePressEvent(QMouseEvent *evt) override
     {
         mLastPos = evt->globalPos();
     }
 
-    void mouseMoveEvent(QMouseEvent *evt)
+    void mouseMoveEvent(QMouseEvent *evt) override
     {
         const QPoint delta = evt->globalPos() - mLastPos;
         move(x()+delta.x(), y()+delta.y());
         mLastPos = evt->globalPos();
     }
 
-    void moveEvent(QMoveEvent *)
+    void resizeEvent(QResizeEvent *) override
     {
-        mParent->UpdateMeasurement(geometry());
+        emit SignalRecalculate();
     }
 
-    void resizeEvent(QResizeEvent *)
-    {
-        mParent->UpdateMeasurement(geometry());
-    }
-
-    MainView * mParent;
     QPoint mLastPos;
 };
 
@@ -558,90 +548,23 @@ MilliVolt PixelScaling::YPixelAsMilliVolt(int px) const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// class DrawGrid
-////////////////////////////////////////////////////////////////////////////////
-
-DrawGrid::DrawGrid(const PixelScaling & scaling):
-    mScaling(scaling)
-{
-}
-
-void DrawGrid::Draw(QWidget & parent)
-{
-    DrawTimeGrid(parent);
-    DrawValueGrid(parent);
-}
-
-void DrawGrid::DrawTimeGrid(QWidget & parent)
-{
-    const int max = parent.widthMM();
-    const int height = parent.height();
-    QPen pen(Qt::red, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    QPainter painter(&parent);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-
-    for (int mm = 0; mm < max; mm += 5)
-    {
-        const int xpx = mScaling.MilliMeterAsXPixel(mm);
-        pen.setStyle(((mm % 25) == 0) ? Qt::SolidLine : Qt::DotLine);
-        painter.setPen(pen);
-        painter.drawLine(xpx, 0, xpx, height);
-    }
-
-    if (max < 1)
-    {
-        qDebug() << "DrawGrid::DrawTimeGrid() width = " << max << "mm";
-    }
-}
-
-void DrawGrid::DrawValueGrid(QWidget & parent)
-{
-    const int max = parent.heightMM();
-    const int width = parent.width();
-    QPainter painter(&parent);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(QPen(Qt::red, 1, Qt::DotLine, Qt::RoundCap, Qt::RoundJoin));
-
-    for (int mm = 0; mm < max; mm += 5)
-    {
-        const int ypx = mScaling.MilliMeterAsYPixel(mm);
-        painter.drawLine(0, ypx, width, ypx);
-    }
-    
-    if (max < 1)
-    {
-        qDebug() << "DrawGrid::DrawValueGrid() height = " << max << "mm";
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
 // class DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
 
-DrawChannel::DrawChannel(const ChannelData & data, const PixelScaling & scaling):
+DrawChannel::DrawChannel(const ChannelData & data, const PixelScaling & scaling,
+        MicroSecond tmOffset, int ypxOffset):
     mScaling(scaling),
     mData(data),
-    mChannelOffset(0),
+    mYPixelOffset(ypxOffset),
+    mTimeOffset(tmOffset),
     mSampleTime(0),
     mLineIndex(0),
     mIsHighlightSamples(false)
 {
 }
 
-int DrawChannel::MinimumWidth() const
+void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 {
-    MicroSecond max = 0;
-    for (auto & data:mData.Lines())
-    {
-        const MicroSecond time = data.Duration();
-        if (max < time) max = time;
-    }
-    return XPixel(max);
-}
-
-void DrawChannel::Draw(QWidget & parent, const QRect & rect, int offset)
-{
-    mChannelOffset = offset;
     QPainter painter(&parent);
     painter.setRenderHint(QPainter::Antialiasing, true);
     DrawSamples(painter, rect);
@@ -709,359 +632,19 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
     }
 }
 
-int DrawChannel::YPixel() const
-{
-    const double value = Line().At(mSampleTime);
-    return mChannelOffset - mScaling.MilliVoltAsYPixel(value);
-}
-
-int DrawChannel::XPixel(MicroSecond sampleTime) const
-{
-    return mScaling.MicroSecondAsXPixel(sampleTime);
-}
-
 bool DrawChannel::IsValidPoint() const
 {
-    return !isnan(Line().At(mSampleTime));
+    return !isnan(Line().At(mTimeOffset + mSampleTime));
 }
 
 QPoint DrawChannel::Point() const
 {
-    return QPoint(XPixel(), YPixel());
+    const double value = Line().At(mTimeOffset + mSampleTime);
+    const int y = mYPixelOffset - mScaling.MilliVoltAsYPixel(value);
+    const int x = mScaling.MicroSecondAsXPixel(mSampleTime);
+    return QPoint(x, y);
 }
     
-////////////////////////////////////////////////////////////////////////////////
-// class MainView
-////////////////////////////////////////////////////////////////////////////////
-
-MainView::MainView(QStatusBar * status):
-    QWidget(),
-    mStatus(status),
-    mDataPtr(nullptr),
-    mMeasurePtr(new Measure(this)),
-    mXZoomValue(0),
-    mYZoomValue(0),
-    mIsHighlightSamples(false)
-{
-    const PixelScaling & zs = ZoomScaling();
-    const int x = zs.MilliMeterAsXPixel(25);
-    const int y = zs.MilliMeterAsYPixel(10);
-    mMeasurePtr->move(x, y);
-    mMeasurePtr->resize(x, y);
-    mMeasurePtr->setMinimumSize(25, 25);
-}
-
-void MainView::ZoomIn()
-{
-    ++mXZoomValue;
-    ++mYZoomValue;
-    RebuildView();
-}
-
-void MainView::ZoomOut()
-{
-    --mXZoomValue;
-    --mYZoomValue;
-    RebuildView();
-}
-
-void MainView::XZoomIn()
-{
-    ++mXZoomValue;
-    RebuildView();
-}
-
-void MainView::XZoomOut()
-{
-    --mXZoomValue;
-    RebuildView();
-}
-
-void MainView::YZoomIn()
-{
-    ++mYZoomValue;
-    RebuildView();
-}
-
-void MainView::YZoomOut()
-{
-    --mYZoomValue;
-    RebuildView();
-}
-
-void MainView::Unzoom()
-{
-    mXZoomValue = 0;
-    mYZoomValue = 0;
-    RebuildView();
-}
-
-void MainView::SetHighlightSamples(bool isTrue)
-{
-    mIsHighlightSamples = isTrue;
-    update();
-}
-
-void MainView::OpenFile(const QString & fileName)
-{
-    mDataPtr->OpenFile(fileName);
-    RebuildView();
-}
-
-void MainView::SetData(MainData & arg)
-{
-    mDataPtr = &arg;
-    InitSize();
-}
-
-void MainView::InitSize()
-{
-    const PixelScaling & zs = ZoomScaling();
-    int minimumWidth = 0;
-
-    for (int index = 0; index < ChannelCount(); ++index)
-    {
-        DrawChannel channel(DataChannel(index), zs);
-        const int channelWidth = channel.MinimumWidth();
-
-        if (minimumWidth < channelWidth)
-        {
-            minimumWidth = channelWidth;
-        }
-    }
-
-    const int width = minimumWidth + 10;
-    setMinimumWidth(width);
-    resize(width, height());
-}
-
-void MainView::RebuildView()
-{
-    InitSize();
-    update();
-    UpdateMeasurement(mMeasurePtr->rect());
-}
-
-void MainView::UpdateMeasurement(const QRect & rect)
-{
-    const PixelScaling scale = ZoomScaling();
-    const MilliSecond ms = scale.XPixelAsMilliSecond(rect.width());
-    const MilliVolt mv = scale.YPixelAsMilliVolt(rect.height());
-    QString txt = QString("%1ms, %2mV").arg(ms).arg(mv);
-    mStatus->showMessage(txt);
-
-}
-
-void MainView::mousePressEvent(QMouseEvent * evt)
-{
-    QRect frame = mMeasurePtr->rect();
-    frame.moveCenter(evt->pos());
-    mMeasurePtr->move(frame.topLeft());
-}
-
-void MainView::paintEvent(QPaintEvent * ptr)
-{
-    DrawGrid grid(StandardScaling());
-    grid.Draw(*this);
-
-    const PixelScaling & zs = ZoomScaling();
-    const int count = ChannelCount();
-    const int widgetHeight = height();
-
-    for (int index = 0; index < count; ++index)
-    {
-        const int channelHeight = widgetHeight / count;
-        const int channelOffset = (index * channelHeight) + (channelHeight / 2);
-        DrawChannel channel(DataChannel(index), zs);
-        channel.SetHighlightSamples(mIsHighlightSamples);
-        channel.Draw(*this, ptr->rect(), channelOffset);
-    }
-}
-    
-PixelScaling MainView::ZoomScaling() const
-{
-    return PixelScaling(mXZoomValue, mYZoomValue);
-}
-
-PixelScaling MainView::StandardScaling() const
-{
-    return PixelScaling(0, 0);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// class MainWindow
-////////////////////////////////////////////////////////////////////////////////
-
-MainWindow::MainWindow()
-{
-    mMainViewPtr = new MainView(statusBar());
-    mMainViewPtr->setBackgroundRole(QPalette::Base);
-    mMainViewPtr->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-
-    mScrollAreaPtr = new QScrollArea();
-    mScrollAreaPtr->setBackgroundRole(QPalette::Dark);
-    mScrollAreaPtr->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    mScrollAreaPtr->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    mScrollAreaPtr->setWidgetResizable(true);
-    mScrollAreaPtr->setWidget(mMainViewPtr);
-
-    setCentralWidget(mScrollAreaPtr);
-    setWindowTitle(QString("no"));
-    resize(600, 300);
-
-    mZoomInActionPtr = new QAction(QString("Zoom In"), this);
-    mZoomInActionPtr->setShortcut(QKeySequence(Qt::Key_Plus + Qt::KeypadModifier));
-    connect(mZoomInActionPtr, SIGNAL(triggered()), this, SLOT(ZoomIn()));
-
-    mZoomOutActionPtr = new QAction(QString("Zoom Out"), this);
-    mZoomOutActionPtr->setShortcut(QKeySequence(Qt::Key_Minus + Qt::KeypadModifier));
-    connect(mZoomOutActionPtr, SIGNAL(triggered()), this, SLOT(ZoomOut()));
-
-    mXZoomInActionPtr = new QAction(QString("X-Zoom In"), this);
-    mXZoomInActionPtr->setShortcut(QKeySequence(Qt::Key_X));
-    connect(mXZoomInActionPtr, SIGNAL(triggered()), this, SLOT(XZoomIn()));
-
-    mXZoomOutActionPtr = new QAction(QString("X-Zoom Out"), this);
-    mXZoomOutActionPtr->setShortcut(QKeySequence(Qt::SHIFT + Qt::Key_X));
-    connect(mXZoomOutActionPtr, SIGNAL(triggered()), this, SLOT(XZoomOut()));
-
-    mYZoomInActionPtr = new QAction(QString("Y-Zoom In"), this);
-    mYZoomInActionPtr->setShortcut(QKeySequence(Qt::Key_Y));
-    connect(mYZoomInActionPtr, SIGNAL(triggered()), this, SLOT(YZoomIn()));
-
-    mYZoomOutActionPtr = new QAction(QString("Y-Zoom Out"), this);
-    mYZoomOutActionPtr->setShortcut(QKeySequence(Qt::SHIFT + Qt::Key_Y));
-    connect(mYZoomOutActionPtr, SIGNAL(triggered()), this, SLOT(YZoomOut()));
-
-    mUnzoomActionPtr = new QAction(QString("Unzoom"), this);
-    mUnzoomActionPtr->setShortcut(QKeySequence(Qt::Key_U));
-    connect(mUnzoomActionPtr, SIGNAL(triggered()), this, SLOT(Unzoom()));
-
-    mHighlightSamplesActionPtr = new QAction(QString("Highlight &Samples"), this);
-    mHighlightSamplesActionPtr->setShortcut(QKeySequence(Qt::Key_H));
-    mHighlightSamplesActionPtr->setChecked(false);
-    mHighlightSamplesActionPtr->setCheckable(true);
-    connect(mHighlightSamplesActionPtr, SIGNAL(triggered()), this, SLOT(HighlightSamples()));
-
-    mOpenActionPtr = new QAction(tr("&Open..."), this);
-    mOpenActionPtr->setShortcut(QKeySequence::Open);
-    connect(mOpenActionPtr, SIGNAL(triggered()), this, SLOT(OpenFile()));
-
-    mReloadActionPtr = new QAction(tr("&Reload"), this);
-    mReloadActionPtr->setShortcut(QKeySequence(Qt::Key_R));
-    connect(mReloadActionPtr, SIGNAL(triggered()), this, SLOT(ReloadFile()));
-
-    mExitActionPtr = new QAction(tr("E&xit"), this);
-    mExitActionPtr->setShortcut(QKeySequence::Quit);
-    connect(mExitActionPtr, SIGNAL(triggered()), this, SLOT(ExitApplication()));
-
-    mFileMenuPtr = menuBar()->addMenu(tr("&File"));
-    mFileMenuPtr->addAction(mOpenActionPtr);
-    mFileMenuPtr->addAction(mReloadActionPtr);
-    mFileMenuPtr->addAction(mExitActionPtr);
-
-    mViewMenuPtr = menuBar()->addMenu(tr("&View"));
-    mViewMenuPtr->addAction(mZoomInActionPtr);
-    mViewMenuPtr->addAction(mZoomOutActionPtr);
-    mViewMenuPtr->addAction(mXZoomInActionPtr);
-    mViewMenuPtr->addAction(mXZoomOutActionPtr);
-    mViewMenuPtr->addAction(mYZoomInActionPtr);
-    mViewMenuPtr->addAction(mYZoomOutActionPtr);
-    mViewMenuPtr->addAction(mUnzoomActionPtr);
-    mViewMenuPtr->addSeparator();
-    mViewMenuPtr->addAction(mHighlightSamplesActionPtr);
-    
-    // adding all actions to QMainWindow solves issue
-    // "keyboard shortcuts not working on ubuntu 14.04":
-    // https://bugs.launchpad.net/ubuntu/+source/appmenu-qt5/+bug/1313248
-    addAction(mOpenActionPtr);
-    addAction(mReloadActionPtr);
-    addAction(mExitActionPtr);
-    addAction(mZoomInActionPtr);
-    addAction(mZoomOutActionPtr);
-    addAction(mXZoomInActionPtr);
-    addAction(mXZoomOutActionPtr);
-    addAction(mYZoomInActionPtr);
-    addAction(mYZoomOutActionPtr);
-    addAction(mUnzoomActionPtr);
-    addAction(mHighlightSamplesActionPtr);
-}
-
-void MainWindow::ReloadFile()
-{
-    mMainViewPtr->OpenFile(mInfoFile);
-    setWindowTitle(QString("no: ") + mInfoFile);
-}
-
-void MainWindow::OpenFile(const QString & file)
-{
-    mInfoFile = file;
-    ReloadFile();
-}
-
-void MainWindow::SetData(MainData & data)
-{
-    mMainViewPtr->SetData(data);
-    show();
-}
-
-void MainWindow::ZoomIn()
-{
-    mMainViewPtr->ZoomIn();
-}
-
-void MainWindow::ZoomOut()
-{
-    mMainViewPtr->ZoomOut();
-}
-
-void MainWindow::XZoomIn()
-{
-    mMainViewPtr->XZoomIn();
-}
-
-void MainWindow::XZoomOut()
-{
-    mMainViewPtr->XZoomOut();
-}
-
-void MainWindow::YZoomIn()
-{
-    mMainViewPtr->YZoomIn();
-}
-
-void MainWindow::YZoomOut()
-{
-    mMainViewPtr->YZoomOut();
-}
-
-void MainWindow::SetHighlightSamples(bool isTrue)
-{
-    qDebug() << "SetHighlightSamples " << isTrue;
-    mMainViewPtr->SetHighlightSamples(isTrue);
-}
-
-void MainWindow::HighlightSamples()
-{
-    SetHighlightSamples(mHighlightSamplesActionPtr->isChecked());
-}
-
-void MainWindow::Unzoom()
-{
-    mMainViewPtr->Unzoom();
-}
-
-void MainWindow::ExitApplication()
-{
-    close();
-}
-
-void MainWindow::OpenFile()
-{
-    OpenFile(QFileDialog::getOpenFileName(this, QString("Open File"),
-                QDir::currentPath()));
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // class ArgumentParser
 ////////////////////////////////////////////////////////////////////////////////
@@ -1141,6 +724,270 @@ void ArgumentParser::PrintUsage()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// new gui
+////////////////////////////////////////////////////////////////////////////////
+
+struct GuiSetup
+{
+    QString fileName;
+    int xzoom;
+    int yzoom;
+    bool drawPoints;
+
+    GuiSetup():
+        fileName(),
+        xzoom(0),
+        yzoom(0),
+        drawPoints(false)
+    {
+    }
+
+    PixelScaling Scaling() const
+    {
+        return PixelScaling(xzoom, yzoom);
+    }
+};
+
+class GuiWave : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit GuiWave(QWidget * parent, const ChannelData & data, const GuiSetup & setup):
+        QWidget(parent),
+        mData(data),
+        mSetup(setup),
+        mMeasure(new Measure(this)),
+        mTimeOffset(0)
+    {
+        const PixelScaling scale = mSetup.Scaling();
+        setMinimumHeight(scale.MilliVoltAsYPixel(data.Max() - data.Min()));
+        const int x = scale.MilliMeterAsXPixel(25);
+        const int y = scale.MilliMeterAsYPixel(10);
+        mMeasure->move(x, y);
+        mMeasure->resize(x, y);
+        mMeasure->setMinimumSize(25, 25);
+        connect(mMeasure, SIGNAL(SignalRecalculate()), this, SLOT(UpdateMeasurement()));
+    }
+
+    void SetTimeOffset(MicroSecond offset)
+    {
+        mTimeOffset = offset;
+        update();
+    }
+    
+    void Rebuild()
+    {
+        update();
+        UpdateMeasurement();
+    }
+signals:
+    void SignalResize();
+private slots:
+    void UpdateMeasurement()
+    {
+        const PixelScaling scale = mSetup.Scaling();
+        const MilliSecond ms = scale.XPixelAsMilliSecond(mMeasure->width());
+        const MilliVolt mv = scale.YPixelAsMilliVolt(mMeasure->height());
+        QString txt = QString("%1ms, %2mV").arg(ms).arg(mv);
+        qDebug() << txt;
+    }
+private:
+    const ChannelData & mData;
+    const GuiSetup & mSetup;
+    Measure * mMeasure;
+    MicroSecond mTimeOffset;
+
+    void mousePressEvent(QMouseEvent * evt) override
+    {
+        QRect frame = mMeasure->rect();
+        frame.moveCenter(evt->pos());
+        mMeasure->move(frame.topLeft());
+    }
+
+    void paintEvent(QPaintEvent * e) override
+    {
+        const PixelScaling scale = mSetup.Scaling();
+        const int viewOffset = height() / 2;
+        const int dataOffset = scale.MilliVoltAsYPixel(mData.Max() + mData.Min()) / 2;
+        const int ypxOffset = viewOffset + dataOffset;
+        DrawChannel draw(mData, scale, mTimeOffset, ypxOffset);
+        draw.SetHighlightSamples(mSetup.drawPoints);
+        draw.Draw(*this, e->rect());
+    }
+
+    void resizeEvent(QResizeEvent *) override
+    {
+        emit SignalResize();
+    }
+};
+
+class GuiSingleChannel : public QScrollArea
+{
+private:
+    GuiWave * mWave;
+public:
+    GuiSingleChannel(QWidget * parent, const ChannelData & data, const GuiSetup & setup):
+        QScrollArea(parent),
+        mWave(new GuiWave(this, data, setup))
+    {
+        setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+        setWidgetResizable(true);
+        setWidget(mWave);
+    }
+
+    GuiWave * Wave()
+    {
+        return mWave;
+    }
+};
+
+class GuiMultiChannel : public QWidget
+{
+    Q_OBJECT
+private:
+    const GuiSetup & mSetup;    
+    const MainData & mData;
+    QScrollBar * mScroll;
+    QList<GuiSingleChannel *> mChannels;
+private slots:
+    void MoveTimeBar(int)
+    {
+        const int pos = mScroll->value();
+        const int max = mScroll->maximum();
+        const int end = mScroll->pageStep() + max - 10;
+        const MicroSecond duration = mData.Duration();
+        const MicroSecond offset = duration * pos / end;
+        for (auto chan:mChannels) {chan->Wave()->SetTimeOffset(offset);}
+    }
+
+    void UpdateTimeBar()
+    {
+        if (mChannels.count() < 1) return;
+        const PixelScaling scale = mSetup.Scaling();
+        const int page = mChannels[0]->Wave()->width();
+        const int end = scale.MicroSecondAsXPixel(mData.Duration());
+        const int max = end - page;
+        mScroll->setValue(0);
+        mScroll->setMinimum(0);
+        mScroll->setMaximum((max < 0) ? 0 : max);
+        mScroll->setPageStep(page);
+    }
+public:
+    GuiMultiChannel(QWidget * parent, const GuiSetup & setup, const MainData & data):
+        QWidget(parent),
+        mSetup(setup),
+        mData(data),
+        mScroll(new QScrollBar(Qt::Horizontal, this)),
+        mChannels()
+    {
+        QVBoxLayout * layout = new QVBoxLayout(this);
+        bool isResizeConnected = false;
+        for (auto & chan:mData.Channels())
+        {
+            GuiSingleChannel * gui = new GuiSingleChannel(this, chan, mSetup);
+            layout->addWidget(gui);
+            mChannels.append(gui);
+
+            if (!isResizeConnected)
+            {
+                isResizeConnected = true;
+                connect(gui->Wave(), SIGNAL(SignalResize()), this, SLOT(UpdateTimeBar()));
+            }
+        }
+        layout->addWidget(mScroll);
+        setLayout(layout);
+        connect(mScroll, SIGNAL(valueChanged (int)), this, SLOT(MoveTimeBar(int)));
+    }
+    
+    void Rebuild()
+    {
+        for (auto chan:mChannels) {chan->Wave()->Rebuild();}
+        UpdateTimeBar();
+    }
+};
+
+class GuiMain : public QMainWindow
+{
+    Q_OBJECT
+private:
+    GuiSetup mSetup;
+    MainData * mData;
+    GuiMultiChannel * mChannels;
+
+    void Rebuild() {if (mChannels) {mChannels->Rebuild();}}
+private slots:
+    void Open()     {Open(QFileDialog::getOpenFileName(this, QString("Open"), QDir::currentPath()));}
+    void Reload()   {Open(mSetup.fileName);}
+    void Exit()     {close();}
+    void Unzoom()   {mSetup.xzoom = 0; mSetup.yzoom = 0; Rebuild();}
+    void ZoomIn()   {mSetup.xzoom++; mSetup.yzoom++; Rebuild();}
+    void ZoomOut()  {mSetup.xzoom--; mSetup.yzoom--; Rebuild();}
+    void XZoomIn()  {mSetup.xzoom++; Rebuild();}
+    void XZoomOut() {mSetup.xzoom--; Rebuild();}
+    void YZoomIn()  {mSetup.yzoom++; Rebuild();}
+    void YZoomOut() {mSetup.yzoom--; Rebuild();}
+    void Points(bool arg) {mSetup.drawPoints = arg; Rebuild();}
+public:
+    GuiMain():
+        mSetup(),
+        mData(nullptr),
+        mChannels(nullptr)
+    {
+        setWindowTitle(QString("no"));
+        resize(600, 300);
+    
+#define ACTION(menu, txt, func, key) do {\
+    QAction * act = new QAction(QString(txt), this);\
+    act->setShortcut(QKeySequence(key));\
+    connect(act, SIGNAL(triggered()), this, SLOT(func()));\
+    menu->addAction(act);\
+    this->addAction(act);\
+} while (0)
+
+        QMenu * fileMenu = menuBar()->addMenu(tr("&File"));
+        ACTION(fileMenu, "&Open...", Open, QKeySequence::Open);
+        ACTION(fileMenu, "&Reload", Reload, Qt::Key_R);
+        ACTION(fileMenu, "&Exit", Exit, QKeySequence::Quit);
+
+        QMenu * viewMenu = menuBar()->addMenu(tr("&View"));
+        ACTION(viewMenu, "&Unzoom", Unzoom, Qt::Key_U);
+        ACTION(viewMenu, "Zoom-&In", ZoomIn, Qt::Key_Plus + Qt::KeypadModifier);
+        ACTION(viewMenu, "Zoom-&Out", ZoomOut, Qt::Key_Minus + Qt::KeypadModifier);
+        ACTION(viewMenu, "X-Zoom-In", XZoomIn, Qt::Key_X);
+        ACTION(viewMenu, "X-Zoom-Out", XZoomOut, Qt::Key_X + Qt::SHIFT);
+        ACTION(viewMenu, "Y-Zoom-In", YZoomIn, Qt::Key_Y);
+        ACTION(viewMenu, "Y-Zoom-Out", YZoomOut, Qt::Key_Y + Qt::SHIFT);
+        ACTION(viewMenu, "&Highlight Samples", HighlightSamples, Qt::Key_H);
+        QAction * points = new QAction(tr("&Draw Points"), this);
+        points->setShortcut(QKeySequence(Qt::Key_P));
+        points->setChecked(mSetup.drawPoints);
+        points->setCheckable(true);
+        connect(points, SIGNAL(triggered(bool)), this, SLOT(Points(bool)));
+        viewMenu->addAction(points);
+        addAction(points);
+#undef ACTION
+    }
+
+    ~GuiMain()
+    {
+        delete mChannels;
+        delete mData;
+    }
+
+    void Open(QString name)
+    {
+        delete mChannels;
+        delete mData;
+        mSetup.fileName = name;
+        mData = new MainData(name);
+        mChannels = new GuiMultiChannel(this, mSetup, *mData);
+        setCentralWidget(mChannels);
+    }
+};
+
+#include "main.moc"
+
+////////////////////////////////////////////////////////////////////////////////
 // main()
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -1155,22 +1002,14 @@ int main(int argc, char * argv[])
         return LightTest::RunTests(argc, argv);
     }
 
-    if (arguments.IsShowHelp() || arguments.IsInvalid())
-    {
-        arguments.PrintUsage();
-        return 0;
-    }
-
-    MainData data;
-    MainWindow window;
-    window.SetData(data);
-    window.SetHighlightSamples(arguments.IsHighlightSamples());
+    GuiMain win;
 
     if (arguments.Files().count() > 0)
     {
-        window.OpenFile(arguments.Files()[0]);
+        win.Open(arguments.Files()[0]);
     }
 
+    win.show();
     return app.exec();
 }
 
