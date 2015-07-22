@@ -297,23 +297,32 @@ public:
 
         while (!in.atEnd())
         {
-            fileList.append(DataFile(in.readLine(), path));
+            const QString line = in.readLine();
+
+            if (QRegularExpression("^#").match(line).hasMatch())
+            {
+                // ignore "comment" lines
+                continue;
+            }
+
+            if (!QRegularExpression("\\S").match(line).hasMatch())
+            {
+                // ignore "whitespace only" lines
+                continue;
+            }
+
+            fileList.append(DataFile(line, path));
         }
         
         for (auto & file:fileList)
         {
-            if (file.IsValid())
-            {
-                if (file.IsOperator(">")) New(file);
-                if (file.IsOperator("+")) Plus(file);
-                if (file.IsOperator("-")) Minus(file);
-            }
-            else
-            {
-                return;
-            }
+            if (!file.IsValid()) return;
+            if (file.IsOperator(">")) New(file);
+            if (file.IsOperator("+")) Plus(file);
+            if (file.IsOperator("-")) Minus(file);
         }
 
+        mIsValid = (mChannels.count() > 0);
         mDuration = 0;
         
         for (auto & chan:mChannels)
@@ -321,8 +330,6 @@ public:
             chan.SetComplete();
             if (mDuration < chan.Duration()) {mDuration = chan.Duration();}
         }
-
-        mIsValid = (mChannels.count() > 0);
     }
     
     bool IsValid() const {return mIsValid;}
@@ -995,22 +1002,23 @@ public:
     {
         delete mGui;
         delete mData;
+        mGui = nullptr;
+        mData = nullptr;
         mSetup.fileName = name;
         mData = new DataMain(name);
+        Unzoom();
 
         if (mData->IsValid())
         {
             mGui = new GuiMain(this, mSetup, *mData);
-            setCentralWidget(mGui);
-            setWindowTitle(name);
         }
         else
         {
-            mGui = nullptr;
-            setCentralWidget(nullptr);
-            setWindowTitle("no");
             QMessageBox::information(0, "error", "Could not parse " + name);
         }
+
+        setCentralWidget(mGui);
+        setWindowTitle(name);
     }
 };
 
