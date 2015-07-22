@@ -277,14 +277,17 @@ class DataMain
 private:
     QList<DataChannel> mChannels;
     MicroSecond mDuration;
+    bool mIsValid;
 public:
-    explicit DataMain(const QString & infoName)
+    explicit DataMain(const QString & infoName):
+        mChannels(),
+        mDuration(0),
+        mIsValid(false)
     {
         QFile info(infoName);
 
         if (!info.open(QIODevice::ReadOnly))
         {
-            QMessageBox::information(0, "error", info.errorString());
             return;
         }
 
@@ -305,6 +308,10 @@ public:
                 if (file.IsOperator("+")) Plus(file);
                 if (file.IsOperator("-")) Minus(file);
             }
+            else
+            {
+                return;
+            }
         }
 
         mDuration = 0;
@@ -314,8 +321,11 @@ public:
             chan.SetComplete();
             if (mDuration < chan.Duration()) {mDuration = chan.Duration();}
         }
+
+        mIsValid = (mChannels.count() > 0);
     }
     
+    bool IsValid() const {return mIsValid;}
     MicroSecond Duration() const {return mDuration;}
 
     const QList<DataChannel> & Channels() const
@@ -380,7 +390,7 @@ class DrawChannel
 public:
     explicit DrawChannel(const DataChannel & data, const PixelScaling & scaling,
             MicroSecond tmOffset, int ypxOffset);
-    void SetHighlightSamples(bool isTrue) {mIsHighlightSamples = isTrue;}
+    void SetDrawPoints(bool arg) {mDrawPoints = arg;}
     void Draw(QWidget & parent, const QRect & rect);
 private:
     void DrawSamples(QPainter & painter, const QRect & rect);
@@ -394,7 +404,7 @@ private:
     const MicroSecond mTimeOffset;
     MicroSecond mSampleTime;
     int mFileIndex;
-    bool mIsHighlightSamples;
+    bool mDrawPoints;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -450,14 +460,14 @@ public:
     void PrintUsage();
     bool IsInvalid() const {return mIsInvalid;}
     bool IsUnitTest() const {return mIsUnitTest;}
-    bool IsHighlightSamples() const {return mIsHighlightSamples;}
+    bool IsDrawPoints() const {return mDrawPoints;}
     bool IsShowHelp() const {return mIsShowHelp;}
     const QStringList & Files() const {return mFiles;}
 private:
     void ParseLine(const QString & file);
     bool mIsInvalid;
     bool mIsUnitTest;
-    bool mIsHighlightSamples;
+    bool mDrawPoints;
     bool mIsShowHelp;
     QString mApplication;
     QStringList mFiles;
@@ -561,7 +571,7 @@ DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scaling,
     mTimeOffset(tmOffset),
     mSampleTime(0),
     mFileIndex(0),
-    mIsHighlightSamples(false)
+    mDrawPoints(false)
 {
 }
 
@@ -577,7 +587,7 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
     QPen defaultPen(Qt::gray, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     QPen highlightPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
 
-    if (!mIsHighlightSamples)
+    if (!mDrawPoints)
     {
         defaultPen.setColor(Qt::black);
     }
@@ -620,7 +630,7 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
             {
                 painter.drawLine(fromPoint, toPoint);
 
-                if (mIsHighlightSamples)
+                if (mDrawPoints)
                 {
                     painter.setPen(highlightPen);
                     painter.drawPoint(fromPoint);
@@ -654,7 +664,7 @@ QPoint DrawChannel::Point() const
 ArgumentParser::ArgumentParser():
     mIsInvalid(false),
     mIsUnitTest(false),
-    mIsHighlightSamples(false),
+    mDrawPoints(false),
     mIsShowHelp(false),
     mFiles()
 {
@@ -681,9 +691,9 @@ void ArgumentParser::ParseLine(const QString & line)
         return;
     }
 
-    if ((line == QString("-l")) || (line == QString("--highlight")))
+    if ((line == QString("-p")) || (line == QString("--points")))
     {
-        mIsHighlightSamples = true;
+        mDrawPoints = true;
         return;
     }
 
@@ -718,11 +728,11 @@ void ArgumentParser::ParseLine(const QString & line)
 void ArgumentParser::PrintUsage()
 {
     qDebug("Usage:");
-    qDebug("  %s [options] [file1 file2 ...]", qPrintable(mApplication));
+    qDebug("  %s [options] [file]", qPrintable(mApplication));
     qDebug("Options:");
-    qDebug("  -t --test ... add test signal");
-    qDebug("  -l --highlight ... highlight samples");
-    qDebug("  -h --help ... show help");
+    qDebug("  -t --test   ... execute unit tests");
+    qDebug("  -p --points ... draw sample points");
+    qDebug("  -h --help   ... show this help");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -815,7 +825,7 @@ private:
         const int dataOffset = scale.MilliVoltAsYPixel(mData.Max() + mData.Min()) / 2;
         const int ypxOffset = viewOffset + dataOffset;
         DrawChannel draw(mData, scale, mTimeOffset, ypxOffset);
-        draw.SetHighlightSamples(mSetup.drawPoints);
+        draw.SetDrawPoints(mSetup.drawPoints);
         draw.Draw(*this, e->rect());
     }
 
@@ -987,9 +997,20 @@ public:
         delete mData;
         mSetup.fileName = name;
         mData = new DataMain(name);
-        mGui = new GuiMain(this, mSetup, *mData);
-        setCentralWidget(mGui);
-        setWindowTitle(name);
+
+        if (mData->IsValid())
+        {
+            mGui = new GuiMain(this, mSetup, *mData);
+            setCentralWidget(mGui);
+            setWindowTitle(name);
+        }
+        else
+        {
+            mGui = nullptr;
+            setCentralWidget(nullptr);
+            setWindowTitle("no");
+            QMessageBox::information(0, "error", "Could not parse " + name);
+        }
     }
 };
 
@@ -1008,6 +1029,12 @@ int main(int argc, char * argv[])
     if (arguments.IsUnitTest())
     {
         return LightTest::RunTests(argc, argv);
+    }
+
+    if (arguments.IsShowHelp() || arguments.IsInvalid())
+    {
+        arguments.PrintUsage();
+        return 0;
     }
 
     MainWindow win;
