@@ -39,6 +39,9 @@ private:
     MilliVolt mMax;
     QList<MilliVolt> mValues;
 public:
+    DataFile & operator=(const DataFile &) = default;
+    DataFile(const DataFile &) = default;
+    DataFile() = delete;
     explicit DataFile(const QString & txt, const QString & path):
         mErrors(0),
         mSampleMask(0xffffu),
@@ -284,6 +287,8 @@ public:
         mDuration(0),
         mIsValid(false)
     {
+        QTime timer;
+        timer.start();
         QFile info(infoName);
 
         if (!info.open(QIODevice::ReadOnly))
@@ -330,6 +335,9 @@ public:
             chan.SetComplete();
             if (mDuration < chan.Duration()) {mDuration = chan.Duration();}
         }
+
+        const MilliSecond ms = timer.elapsed();
+        qDebug() << "DataMain::ctor took" << ms << "ms";
     }
     
     bool IsValid() const {return mIsValid;}
@@ -401,10 +409,14 @@ public:
     void Draw(QWidget & parent, const QRect & rect);
 private:
     void DrawSamples(QPainter & painter, const QRect & rect);
+    void DrawSampleWise(QPainter & painter, MicroSecond end);
+    void DrawPixelWise(QPainter & painter, MicroSecond end);
     bool IsValidPoint() const;
     QPoint Point() const;
     const DataFile & File() const {return mData.Files()[mFileIndex];}
 
+    QPen mDefaultPen;
+    QPen mHighlightPen;
     const PixelScaling & mScaling;
     const DataChannel & mData;
     const int mYPixelOffset;
@@ -572,6 +584,8 @@ MilliVolt PixelScaling::YPixelAsMilliVolt(int px) const
 
 DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scaling,
         MicroSecond tmOffset, int ypxOffset):
+    mDefaultPen(Qt::gray, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
+    mHighlightPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mScaling(scaling),
     mData(data),
     mYPixelOffset(ypxOffset),
@@ -584,28 +598,22 @@ DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scaling,
 
 void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 {
+    mDefaultPen.setColor(mDrawPoints ? Qt::gray : Qt::black);
     QPainter painter(&parent);
     painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(mDefaultPen);
+
     DrawSamples(painter, rect);
 }
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
-    QPen defaultPen(Qt::gray, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    QPen highlightPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-
-    if (!mDrawPoints)
-    {
-        defaultPen.setColor(Qt::black);
-    }
-
     const MicroSecond drawBegin = mScaling.XPixelAsMicroSecond(rect.left());
     const MicroSecond drawEnd = mScaling.XPixelAsMicroSecond(rect.right());
     const MicroSecond pixelPeriod = mScaling.XPixelAsMicroSecond(1);
 
     for (mFileIndex = 0; mFileIndex < mData.Files().count(); ++mFileIndex)
     {
-        const MicroSecond samplePeriod = File().SamplePeriod();
         MicroSecond begin = 0;
         MicroSecond end = File().Duration();
 
@@ -619,35 +627,98 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
             end = drawEnd;
         }
 
+        const MicroSecond samplePeriod = File().SamplePeriod();
         begin -= 2 * (samplePeriod + pixelPeriod);
         end += 2 * (samplePeriod + pixelPeriod);
-
         mSampleTime = begin;
-        QPoint fromPoint = Point();
-        bool fromValid = IsValidPoint();
+
+        const IntType samplesPerPixel = pixelPeriod / samplePeriod;
+
+        if (samplesPerPixel > 9)
+        {
+            // in case of many samples per pixel it is
+            // too slow to draw every single sample.
+            DrawPixelWise(painter, end);
+        }
+        else
+        {
+            DrawSampleWise(painter, end);
+        }
+    }
+}
+
+void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond end)
+{
+    const MicroSecond samplePeriod = File().SamplePeriod();
+    const MicroSecond pixelPeriod = mScaling.XPixelAsMicroSecond(1);
+    const DataFile & file = File();
+
+    for (;mSampleTime < end; mSampleTime += pixelPeriod)
+    {
+        // for every pixel draw 4 samples:
+        // first, last, min, max
+        const MicroSecond timeFirst = mTimeOffset + mSampleTime;
+        const MicroSecond timeLast = timeFirst + pixelPeriod;
+        const MilliVolt first = file.At(timeFirst);
+        if (isnan(first)) continue;
+        const MilliVolt last = file.At(timeLast);
+        if (isnan(last)) continue;
+        MilliVolt min = first;
+        MilliVolt max = first;
+        MicroSecond timeMin = timeFirst;
+        MicroSecond timeMax = timeFirst;
+        MicroSecond timeValue = timeFirst + samplePeriod;
+
+        for (; timeValue < timeLast; timeValue += samplePeriod)
+        {
+            const MilliVolt value = file.At(timeValue);
+            if (isnan(value)) continue;
+            if (min > value) {min = value; timeMin = timeValue;}
+            if (max < value) {max = value; timeMax = timeValue;}
+        }
+
+        const int x1 = mScaling.MicroSecondAsXPixel(mSampleTime);
+        const int x2 = mScaling.MicroSecondAsXPixel(mSampleTime + pixelPeriod);
+        const int y1 = mYPixelOffset - mScaling.MilliVoltAsYPixel(first);
+        const int y4 = mYPixelOffset - mScaling.MilliVoltAsYPixel(last);
+        const int ya = mYPixelOffset - mScaling.MilliVoltAsYPixel(min);
+        const int yb = mYPixelOffset - mScaling.MilliVoltAsYPixel(max);
+        const int y2 = (timeMin < timeMax) ? ya : yb;
+        const int y3 = (timeMin < timeMax) ? yb : ya;
+
+        painter.drawLine(x1, y1, x1, y2);
+        painter.drawLine(x1, y2, x2, y3);
+        painter.drawLine(x2, y3, x2, y4);
+    }
+}
+
+void DrawChannel::DrawSampleWise(QPainter & painter, MicroSecond end)
+{
+    const MicroSecond samplePeriod = File().SamplePeriod();
+    QPoint fromPoint = Point();
+    bool fromValid = IsValidPoint();
+    mSampleTime += samplePeriod;
+
+    while (mSampleTime < end)
+    {
+        const QPoint toPoint = Point();
+        const bool toValid = IsValidPoint();
         mSampleTime += samplePeriod;
 
-        while (mSampleTime < end)
+        if (fromValid && toValid)
         {
-            const QPoint toPoint = Point();
-            const bool toValid = IsValidPoint();
-            mSampleTime += samplePeriod;
+            painter.drawLine(fromPoint, toPoint);
 
-            if (fromValid && toValid)
+            if (mDrawPoints)
             {
-                painter.drawLine(fromPoint, toPoint);
-
-                if (mDrawPoints)
-                {
-                    painter.setPen(highlightPen);
-                    painter.drawPoint(fromPoint);
-                    painter.setPen(defaultPen);
-                }
+                painter.setPen(mHighlightPen);
+                painter.drawPoint(fromPoint);
+                painter.setPen(mDefaultPen);
             }
-
-            fromValid = toValid;
-            fromPoint = toPoint;
         }
+
+        fromValid = toValid;
+        fromPoint = toPoint;
     }
 }
 
