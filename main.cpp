@@ -450,10 +450,8 @@ public:
     void Draw(QWidget & parent, const QRect & rect);
 private:
     void DrawSamples(QPainter & painter, const QRect & rect);
-    void DrawSampleWise(QPainter & painter, MicroSecond end);
-    void DrawPixelWise(QPainter & painter, MicroSecond end);
-    bool IsValidPoint() const;
-    QPoint Point() const;
+    void DrawSampleWise(QPainter & painter, MicroSecond timeBegin, MicroSecond timeEnd);
+    void DrawPixelWise(QPainter & painter, MicroSecond timeBegin, MicroSecond timeEnd);
     const DataFile & File() const {return mData.Files()[mFileIndex];}
 
     QPen mDefaultPen;
@@ -462,7 +460,6 @@ private:
     const DataChannel & mData;
     const int mYPixelOffset;
     const MicroSecond mTimeOffset;
-    MicroSecond mSampleTime;
     int mFileIndex;
     bool mDrawPoints;
 };
@@ -631,7 +628,6 @@ DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scaling,
     mData(data),
     mYPixelOffset(ypxOffset),
     mTimeOffset(tmOffset),
-    mSampleTime(0),
     mFileIndex(0),
     mDrawPoints(false)
 {
@@ -649,133 +645,125 @@ void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
-    const MicroSecond drawBegin = mScaling.XPixelAsMicroSecond(rect.left());
-    const MicroSecond drawEnd = mScaling.XPixelAsMicroSecond(rect.right());
+    const MicroSecond paintBegin = mScaling.XPixelAsMicroSecond(rect.left());
+    const MicroSecond paintEnd = mScaling.XPixelAsMicroSecond(rect.right());
     const MicroSecond pixelPeriod = mScaling.XPixelAsMicroSecond(1);
 
     for (mFileIndex = 0; mFileIndex < mData.Files().count(); ++mFileIndex)
     {
-        MicroSecond begin = 0;
-        MicroSecond end = File().Duration();
-
-        if (begin < drawBegin)
-        {
-            begin = drawBegin;
-        }
-
-        if (end > drawEnd)
-        {
-            end = drawEnd;
-        }
-
         const MicroSecond samplePeriod = File().SamplePeriod();
-        begin -= 2 * (samplePeriod + pixelPeriod);
-        end += 2 * (samplePeriod + pixelPeriod);
-        mSampleTime = begin;
-
         const IntType samplesPerPixel = pixelPeriod / samplePeriod;
+        const MicroSecond paintMax = paintEnd + 2 * (samplePeriod + pixelPeriod);
+        const MicroSecond fileDuration = File().Duration();
+        const MicroSecond fileEnd = paintMax < fileDuration ? paintMax : fileDuration;
+        const MicroSecond fileBegin = paintBegin > 0 ? paintBegin : 0;
 
         if (samplesPerPixel > 9)
         {
             // in case of many samples per pixel it is
             // too slow to draw every single sample.
-            DrawPixelWise(painter, end);
+            DrawPixelWise(painter, fileBegin, fileEnd);
         }
         else
         {
-            DrawSampleWise(painter, end);
+            DrawSampleWise(painter, fileBegin, fileEnd);
         }
     }
 }
 
-void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond end)
+void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond timeBegin, MicroSecond timeEnd)
 {
-    const MicroSecond samplePeriod = File().SamplePeriod();
-    const MicroSecond pixelPeriod = mScaling.XPixelAsMicroSecond(1);
     const DataFile & file = File();
+    const MicroSecond samplePeriod = file.SamplePeriod();
+    MicroSecond time = timeBegin;
+    MilliVolt value = 0;
 
-    for (;mSampleTime < end; mSampleTime += pixelPeriod)
+    // jump behind invalid beginning
+    for (; time < timeEnd; time += samplePeriod)
     {
-        // for every pixel draw 3 lines between 4 samples:
-        // first, last, min, max
-        const MicroSecond timeFirst = mTimeOffset + mSampleTime;
-        const MicroSecond timeLast = timeFirst + pixelPeriod;
-        const MilliVolt first = file.At(timeFirst);
-        if (isnan(first)) continue;
-        const MilliVolt last = file.At(timeLast);
-        if (isnan(last)) continue;
-        MilliVolt min = first;
-        MilliVolt max = first;
-        MicroSecond timeMin = timeFirst;
-        MicroSecond timeMax = timeFirst;
-        MicroSecond timeValue = timeFirst + samplePeriod;
+        value = file.At(mTimeOffset + time);
+        if (!isnan(value)) break;
+    }
 
-        for (; timeValue < timeLast; timeValue += samplePeriod)
+    MilliVolt min = value;
+    MilliVolt max = value;
+    MilliVolt old = value;
+    int xpxOld = mScaling.MicroSecondAsXPixel(time);
+
+    // process valid samples
+    for (; time < timeEnd; time += samplePeriod)
+    {
+        value = file.At(mTimeOffset + time);
+        if (isnan(value)) return;
+        const int xpx = mScaling.MicroSecondAsXPixel(time);
+
+        if (xpx > xpxOld)
         {
-            const MilliVolt value = file.At(timeValue);
-            if (isnan(value)) continue;
-            if (min > value) {min = value; timeMin = timeValue;}
-            if (max < value) {max = value; timeMax = timeValue;}
+            // We have reached a new ypixel.
+            // - Draw a line from min to max in the old ypixel
+            // - Draw a line from the last sample in the old ypixel
+            //   to the first sample in the new ypixel.
+            const int ypxMin = mYPixelOffset - mScaling.MilliVoltAsYPixel(min);
+            const int ypxMax = mYPixelOffset - mScaling.MilliVoltAsYPixel(max);
+            const int ypxOld = mYPixelOffset - mScaling.MilliVoltAsYPixel(old);
+            const int ypx    = mYPixelOffset - mScaling.MilliVoltAsYPixel(value);
+
+            painter.drawLine(xpxOld, ypxMin, xpxOld, ypxMax);
+            painter.drawLine(xpxOld, ypxOld, xpx, ypx);
+
+            min = value;
+            max = value;
+            old = value;
+            xpxOld = xpx;
         }
-
-        const int x1 = mScaling.MicroSecondAsXPixel(mSampleTime);
-        const int x2 = mScaling.MicroSecondAsXPixel(mSampleTime + pixelPeriod);
-        const int y1 = mYPixelOffset - mScaling.MilliVoltAsYPixel(first);
-        const int y4 = mYPixelOffset - mScaling.MilliVoltAsYPixel(last);
-        const int ya = mYPixelOffset - mScaling.MilliVoltAsYPixel(min);
-        const int yb = mYPixelOffset - mScaling.MilliVoltAsYPixel(max);
-        const int y2 = (timeMin < timeMax) ? ya : yb;
-        const int y3 = (timeMin < timeMax) ? yb : ya;
-
-        painter.drawLine(x1, y1, x1, y2);
-        painter.drawLine(x1, y2, x2, y3);
-        painter.drawLine(x2, y3, x2, y4);
+        else
+        {
+            // We are still in the same old ypixel.
+            // Tracking min and max values is sufficient.
+            if (min > value) {min = value;}
+            if (max > value) {max = value;}
+            old = value;
+        }
     }
 }
 
-void DrawChannel::DrawSampleWise(QPainter & painter, MicroSecond end)
+void DrawChannel::DrawSampleWise(QPainter & painter, MicroSecond timeBegin, MicroSecond timeEnd)
 {
-    const MicroSecond samplePeriod = File().SamplePeriod();
-    QPoint fromPoint = Point();
-    bool fromValid = IsValidPoint();
-    mSampleTime += samplePeriod;
+    const DataFile & file = File();
+    const MicroSecond samplePeriod = file.SamplePeriod();
+    MicroSecond time = timeBegin;
+    MilliVolt value = 0;
 
-    while (mSampleTime < end)
+    // jump behind invalid beginning
+    for (; time < timeEnd; time += samplePeriod)
     {
-        const QPoint toPoint = Point();
-        const bool toValid = IsValidPoint();
-        mSampleTime += samplePeriod;
+        value = file.At(mTimeOffset + time);
+        if (!isnan(value)) break;
+    }
+        
+    int xpxOld = mScaling.MicroSecondAsXPixel(time);
+    int ypxOld = mYPixelOffset - mScaling.MilliVoltAsYPixel(value);
 
-        if (fromValid && toValid)
+    // process valid samples
+    for (; time < timeEnd; time += samplePeriod)
+    {
+        value = file.At(mTimeOffset + time);
+        if (isnan(value)) return;
+        const int xpx = mScaling.MicroSecondAsXPixel(time);
+        const int ypx = mYPixelOffset - mScaling.MilliVoltAsYPixel(value);
+        painter.drawLine(xpxOld, ypxOld, xpx, ypx);
+        xpxOld = xpx;
+        ypxOld = ypx;
+
+        if (mDrawPoints)
         {
-            painter.drawLine(fromPoint, toPoint);
-
-            if (mDrawPoints)
-            {
-                painter.setPen(mHighlightPen);
-                painter.drawPoint(fromPoint);
-                painter.setPen(mDefaultPen);
-            }
+            painter.setPen(mHighlightPen);
+            painter.drawPoint(xpx, ypx);
+            painter.setPen(mDefaultPen);
         }
-
-        fromValid = toValid;
-        fromPoint = toPoint;
     }
 }
 
-bool DrawChannel::IsValidPoint() const
-{
-    return !isnan(File().At(mTimeOffset + mSampleTime));
-}
-
-QPoint DrawChannel::Point() const
-{
-    const double value = File().At(mTimeOffset + mSampleTime);
-    const int y = mYPixelOffset - mScaling.MilliVoltAsYPixel(value);
-    const int x = mScaling.MicroSecondAsXPixel(mSampleTime);
-    return QPoint(x, y);
-}
-    
 ////////////////////////////////////////////////////////////////////////////////
 // class ArgumentParser
 ////////////////////////////////////////////////////////////////////////////////
