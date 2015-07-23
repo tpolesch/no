@@ -10,7 +10,7 @@ typedef IntType MicroSecond;
 typedef IntType MilliSecond;
 typedef double FloatType;
 typedef FloatType MilliVolt;
-typedef std::vector<MilliVolt>::const_iterator ValueIterator;
+typedef std::vector<MilliVolt>::const_iterator ItFloat;
 inline static MicroSecond FromMilliSec(IntType ms)
 {
     return ms * 1000ll;
@@ -459,8 +459,8 @@ public:
     void Draw(QWidget & parent, const QRect & rect);
 private:
     void DrawSamples(QPainter & painter, const QRect & rect);
-    void DrawSampleWise(QPainter & painter, MicroSecond time, ValueIterator it, const ValueIterator end);
-    void DrawPixelWise(QPainter & painter, MicroSecond time, ValueIterator it, const ValueIterator end);
+    void DrawSampleWise(QPainter & painter, MicroSecond time, ItFloat it, ItFloat end);
+    void DrawPixelWise(QPainter & painter, MicroSecond time, ItFloat it, ItFloat end);
     const DataFile & File() const {return mData.Files()[mFileIndex];}
 
     const QPen mLinePen;
@@ -673,9 +673,9 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
             return;
         }
 
-        const IntType samplesPerPixel = pixelPeriod / samplePeriod;
-        const ValueIterator it = data.Values().begin() + indexBegin;
-        const ValueIterator end = data.Values().begin() + indexEnd;
+        const int samplesPerPixel = pixelPeriod / samplePeriod;
+        auto it = data.Values().begin() + indexBegin;
+        auto end = data.Values().begin() + indexEnd;
 
         if (samplesPerPixel > 9)
         {
@@ -690,7 +690,7 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
     }
 }
 
-void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond time, ValueIterator it, const ValueIterator end)
+void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond time, ItFloat it, const ItFloat end)
 {
     const MicroSecond samplePeriod = File().SamplePeriod();
     int xpxOld = mScaling.MicroSecondAsXPixel(time);
@@ -699,7 +699,7 @@ void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond time, ValueItera
     MilliVolt min = old;
     MilliVolt max = old;
 
-    while (it != end)
+    while (it < end)
     {
         const int xpx = mScaling.MicroSecondAsXPixel(time);
         time += samplePeriod;
@@ -735,14 +735,14 @@ void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond time, ValueItera
     }
 }
 
-void DrawChannel::DrawSampleWise(QPainter & painter, MicroSecond time, ValueIterator it, const ValueIterator end)
+void DrawChannel::DrawSampleWise(QPainter & painter, MicroSecond time, ItFloat it, const ItFloat end)
 {
     const MicroSecond samplePeriod = File().SamplePeriod();
     int xpxOld = mScaling.MicroSecondAsXPixel(time);
     time += samplePeriod;
     int ypxOld = mYPixelOffset - mScaling.MilliVoltAsYPixel(*it++);
 
-    while (it != end)
+    while (it < end)
     {
         const int xpx = mScaling.MicroSecondAsXPixel(time);
         time += samplePeriod;
