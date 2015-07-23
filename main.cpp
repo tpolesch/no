@@ -39,7 +39,7 @@ private:
     QString mLabel;
     MilliVolt mMin;
     MilliVolt mMax;
-    QList<MilliVolt> mValues;
+    std::vector<MilliVolt> mValues;
 public:
     DataFile & operator=(const DataFile &) = default;
     DataFile(const DataFile &) = default;
@@ -82,8 +82,8 @@ public:
 
     double At(MicroSecond us) const
     {
-        const IntType index = (us - mSignalDelay) / SamplePeriod();
-        return ((index >= 0) && (index < mValues.count()))
+        const int index = (us - mSignalDelay) / SamplePeriod();
+        return ((index >= 0) && (index < static_cast<int>(mValues.size())))
             ? mValues[index]
             : NAN;
     }
@@ -100,14 +100,14 @@ public:
 
     void Minus(const DataFile & other)
     {
-        QList<double> result;
+        std::vector<MilliVolt> result;
 
         for (IntType us = 0; us < Duration(); us += SamplePeriod())
         {
-            const double a = At(us);
-            const double b = other.At(us);
+            const MilliVolt a = At(us);
+            const MilliVolt b = other.At(us);
             if (isnan(a) || (isnan(b))) continue;
-            result.append(a - b);
+            result.push_back(a - b);
         }
 
         mValues = result;
@@ -150,7 +150,7 @@ private:
             const MilliVolt mv = mSampleGain * lsb;
             if (isnan(mMin) || (mMin > mv)) {mMin = mv;}
             if (isnan(mMax) || (mMax < mv)) {mMax = mv;}
-            mValues.append(mv);
+            mValues.push_back(mv);
         }
 
         read.close();
@@ -444,6 +444,7 @@ private:
 class DrawChannel
 {
 public:
+    ~DrawChannel();
     explicit DrawChannel(const DataChannel & data, const PixelScaling & scaling,
             MicroSecond tmOffset, int ypxOffset);
     void SetDrawPoints(bool arg) {mDrawPoints = arg;}
@@ -454,12 +455,13 @@ private:
     void DrawPixelWise(QPainter & painter, MicroSecond timeBegin, MicroSecond timeEnd);
     const DataFile & File() const {return mData.Files()[mFileIndex];}
 
-    QPen mLinePen;
-    QPen mPointPen;
+    const QPen mLinePen;
+    const QPen mPointPen;
     const PixelScaling & mScaling;
     const DataChannel & mData;
     const int mYPixelOffset;
     const MicroSecond mTimeOffset;
+    QTime mTimer;
     int mFileIndex;
     bool mDrawPoints;
 };
@@ -623,14 +625,22 @@ MilliVolt PixelScaling::YPixelAsMilliVolt(int px) const
 DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scaling,
         MicroSecond tmOffset, int ypxOffset):
     mLinePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
-    mPointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
+    mPointPen(Qt::gray, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mScaling(scaling),
     mData(data),
     mYPixelOffset(ypxOffset),
     mTimeOffset(tmOffset),
+    mTimer(),
     mFileIndex(0),
     mDrawPoints(false)
 {
+    mTimer.start();
+}
+
+DrawChannel::~DrawChannel()
+{
+    const MilliSecond ms = mTimer.elapsed();
+    qDebug() << "~DrawChannel after" << ms << "ms";
 }
 
 void DrawChannel::Draw(QWidget & parent, const QRect & rect)
@@ -668,6 +678,7 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
             DrawSampleWise(painter, fileBegin, fileEnd);
         }
     }
+
 }
 
 void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond timeBegin, MicroSecond timeEnd)
@@ -740,7 +751,6 @@ void DrawChannel::DrawSampleWise(QPainter & painter, MicroSecond timeBegin, Micr
         if (!isnan(value)) break;
     }
         
-    if (mDrawPoints) {mLinePen.setColor(Qt::gray);}
     int xpxOld = mScaling.MicroSecondAsXPixel(time);
     int ypxOld = mYPixelOffset - mScaling.MilliVoltAsYPixel(value);
 
