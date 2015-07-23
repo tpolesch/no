@@ -439,12 +439,10 @@ public:
 private:
     static double MilliMeterPerMilliVolt() {return 10.0;}
     static double MilliMeterPerSecond() {return 25.0;}
-    const int mXZoom;
-    const int mYZoom;
-    double mXmm;
-    double mXpx;
-    double mYmm;
-    double mYpx;
+    int mXmm;
+    int mXpx;
+    int mYmm;
+    int mYpx;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -546,47 +544,29 @@ private:
 // class PixelScaling
 ////////////////////////////////////////////////////////////////////////////////
 
-PixelScaling::PixelScaling(int xzoom, int yzoom):
-    mXZoom(xzoom),
-    mYZoom(yzoom)
+PixelScaling::PixelScaling(int xzoom, int yzoom)
 {
     const QDesktopWidget desk;
-    mXmm = static_cast<double>(desk.widthMM());
-    mYmm = static_cast<double>(desk.heightMM());
-    mXpx = static_cast<double>(desk.width());
-    mYpx = static_cast<double>(desk.height());
-}
-
-inline static double AddZoomHelper(double value, int zoom)
-{
-    if (zoom < 0)
-    {
-        return value / static_cast<double>(1 << (-zoom));
-    }
-
-    return value * static_cast<double>(1 << zoom);
-}
-
-inline static int AddZoom(double value, int zoom)
-{
-    return static_cast<int>(AddZoomHelper(value, zoom));
-}
-
-inline static double RemoveZoom(double value, int zoom)
-{
-    return AddZoomHelper(value, -zoom);
+    mXmm = desk.widthMM();
+    mYmm = desk.heightMM();
+    mXpx = desk.width();
+    mYpx = desk.height();
+    if (xzoom > 0) {mXpx *= (1 << xzoom);}
+    if (yzoom > 0) {mYpx *= (1 << yzoom);}
+    if (xzoom < 0) {mXmm *= (1 << (-xzoom));}
+    if (yzoom < 0) {mYmm *= (1 << (-yzoom));}
 }
 
 int PixelScaling::MilliMeterAsXPixel(double arg) const
 {
     const double xpx = arg * mXpx / mXmm;
-    return AddZoom(xpx, mXZoom);
+    return xpx;
 }
 
 int PixelScaling::MilliMeterAsYPixel(double arg) const
 {
     const double ypx = arg * mYpx / mYmm;
-    return AddZoom(ypx, mYZoom);
+    return ypx;
 }
 
 int PixelScaling::MilliVoltAsYPixel(MilliVolt mv) const
@@ -603,13 +583,13 @@ int PixelScaling::MicroSecondAsXPixel(MicroSecond us) const
 double PixelScaling::XPixelAsMilliMeter(int xpx) const
 {
     const double xmm = (static_cast<double>(xpx) * mXmm) / mXpx;
-    return RemoveZoom(xmm, mXZoom);
+    return xmm;
 }
 
 double PixelScaling::YPixelAsMilliMeter(int px) const
 {
     const double mm = (static_cast<double>(px) * mYmm) / mYpx;
-    return RemoveZoom(mm, mYZoom);
+    return mm;
 }
 
 MilliSecond PixelScaling::XPixelAsMilliSecond(int px) const
