@@ -23,9 +23,11 @@ inline static MicroSecond FromMilliSec(IntType ms)
 class DataFile
 {
 private:
-    unsigned int mErrors;
-    unsigned int mSampleMask;
+    int mErrors;
+    int mSampleMask;
     int mSampleOffset;
+    bool mIsSigned;
+    bool mIsBigEndian;
     MicroSecond mSignalDelay;
     MicroSecond mSamplePeriod;
     double mDivisor;
@@ -44,8 +46,10 @@ public:
     DataFile() = delete;
     explicit DataFile(const QString & txt, const QString & path):
         mErrors(0),
-        mSampleMask(0xffffu),
+        mSampleMask(0xffff),
         mSampleOffset(0),
+        mIsSigned(true),
+        mIsBigEndian(true),
         mSignalDelay(0),
         mSamplePeriod(0),
         mDivisor(1.0),
@@ -123,13 +127,26 @@ private:
         }
 
         QDataStream stream(&read);
-        stream.setByteOrder(QDataStream::BigEndian);
+        stream.setByteOrder(mIsBigEndian ? QDataStream::BigEndian : QDataStream::LittleEndian);
 
         while (!stream.atEnd())
         {
-            quint16 sample;
-            stream >> sample;
-            const int lsb = (sample & mSampleMask) - mSampleOffset;
+            int lsb;
+            if (mIsSigned)
+            {
+                const qint16 mask = static_cast<qint16>(mSampleMask);
+                qint16 sample;
+                stream >> sample;
+                lsb = static_cast<int>(sample & mask) - mSampleOffset;
+            }
+            else
+            {
+                const quint16 mask = static_cast<quint16>(mSampleMask);
+                quint16 sample;
+                stream >> sample;
+                lsb = static_cast<int>(sample & mask) - mSampleOffset;
+            }
+
             const MilliVolt mv = mSampleGain * lsb;
             if (isnan(mMin) || (mMin > mv)) {mMin = mv;}
             if (isnan(mMax) || (mMax < mv)) {mMax = mv;}
@@ -177,11 +194,35 @@ private:
         }
 
         QString dst;
-        if (isValid && Find(dst, optPos, "s-mask")) {mSampleMask   = dst.toUInt(&isValid, 0);}
+        if (isValid && Find(dst, optPos, "s-mask")) {mSampleMask   = dst.toInt(&isValid, 0);}
         if (isValid && Find(dst, optPos, "offset")) {mSampleOffset = dst.toInt(&isValid, 0);}
-        if (isValid && Find(dst, optPos, "delay"))  {mSignalDelay = FromMilliSec(dst.toInt(&isValid, 0));}
+        if (isValid && Find(dst, optPos, "delay"))  {mSignalDelay  = FromMilliSec(dst.toInt(&isValid, 0));}
         if (isValid && Find(dst, optPos, "gain"))   {mSampleGain   = dst.toDouble(&isValid);}
         if (!isValid) {AddError();}
+
+        if (mSampleMask == 0x3fff)
+        {
+            // Many info files do not contain any of the u16/i16 keywords. Thus we are
+            // guessing and testing for other typical properties of unsigned ecg samples.
+            mIsSigned = ((mSampleOffset != 0x1fff) && (mSampleOffset != 0x2000));
+        }
+
+        // Hint: Avoid these keywords. They describe only a part of the data.
+        if (Contains(optPos, "swab"))  {mIsBigEndian = false;}
+        if (Contains(optPos, "u16"))   {mIsSigned = false;}
+        if (Contains(optPos, "i16"))   {mIsSigned = true;}
+
+        // Hint: Use these keywords instead: They fully describe the data.
+        if (Contains(optPos, "beu16")) {mIsSigned = false; mIsBigEndian = true;}
+        if (Contains(optPos, "leu16")) {mIsSigned = false; mIsBigEndian = false;}
+        if (Contains(optPos, "bei16")) {mIsSigned = true;  mIsBigEndian = true;}
+        if (Contains(optPos, "lei16")) {mIsSigned = true;  mIsBigEndian = false;}
+    }
+
+    bool Contains(int startPos, const QString & key) const
+    {
+        QRegularExpression re(QString("\\b%1\\b").arg(key));
+        return re.match(mTxt, startPos).hasMatch();
     }
 
     bool Find(QString & dst, int startPos, const QString & key) const
@@ -655,7 +696,7 @@ void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond end)
 
     for (;mSampleTime < end; mSampleTime += pixelPeriod)
     {
-        // for every pixel draw 4 samples:
+        // for every pixel draw 3 lines between 4 samples:
         // first, last, min, max
         const MicroSecond timeFirst = mTimeOffset + mSampleTime;
         const MicroSecond timeLast = timeFirst + pixelPeriod;
