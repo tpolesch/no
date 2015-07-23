@@ -267,22 +267,22 @@ private:
     MilliVolt mMin;
     MilliVolt mMax;
     MicroSecond mDuration;
-    QList<DataFile> mFiles;
+    std::vector<DataFile> mFiles;
 public:
     void Plus(DataFile & file)
     {
-        mFiles.append(file);
+        mFiles.push_back(file);
     }
 
     void Minus(DataFile & file)
     {
-        const int index = mFiles.count() - 1;
+        const int index = mFiles.size() - 1;
         mFiles[index].Minus(file);
     }
 
     void SetComplete()
     {
-        if (mFiles.count() < 1)
+        if (mFiles.size() < 1)
         {
             mMin = 0;
             mMax = 0;
@@ -302,7 +302,7 @@ public:
         }
     }
     
-    const QList<DataFile> & Files() const
+    const std::vector<DataFile> & Files() const
     {
        return mFiles;
     }
@@ -319,7 +319,7 @@ public:
 class DataMain
 {
 private:
-    QList<DataChannel> mChannels;
+    std::vector<DataChannel> mChannels;
     MicroSecond mDuration;
     bool mIsValid;
 public:
@@ -339,7 +339,7 @@ public:
 
         const QString path = QFileInfo(info).path() + "/";
         QTextStream in(&info);
-        QList<DataFile> fileList;
+        std::vector<DataFile> fileList;
 
         while (!in.atEnd())
         {
@@ -357,7 +357,7 @@ public:
                 continue;
             }
 
-            fileList.append(DataFile(line, path));
+            fileList.push_back(DataFile(line, path));
         }
         
         for (auto & file:fileList)
@@ -368,7 +368,7 @@ public:
             if (file.IsOperator("-")) Minus(file);
         }
 
-        mIsValid = (mChannels.count() > 0);
+        mIsValid = (mChannels.size() > 0);
         mDuration = 0;
         
         for (auto & chan:mChannels)
@@ -384,7 +384,7 @@ public:
     bool IsValid() const {return mIsValid;}
     MicroSecond Duration() const {return mDuration;}
 
-    const QList<DataChannel> & Channels() const
+    const std::vector<DataChannel> & Channels() const
     {
        return mChannels;
     }
@@ -392,19 +392,19 @@ private:
     void New(DataFile & file)
     {
         DataChannel data;
-        mChannels.append(data);
+        mChannels.push_back(data);
         Plus(file);
     }
 
     void Plus(DataFile & file)
     {
-        const int index = mChannels.count() - 1;
+        const int index = mChannels.size() - 1;
         mChannels[index].Plus(file);
     }
 
     void Minus(DataFile & file)
     {
-        const int index = mChannels.count() - 1;
+        const int index = mChannels.size() - 1;
         mChannels[index].Minus(file);
     }
 };
@@ -462,7 +462,7 @@ private:
     const int mYPixelOffset;
     const MicroSecond mTimeOffset;
     QTime mTimer;
-    int mFileIndex;
+    size_t mFileIndex;
     bool mDrawPoints;
 };
 
@@ -658,7 +658,7 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
     const MicroSecond paintEnd = mScaling.XPixelAsMicroSecond(rect.right());
     const MicroSecond pixelPeriod = mScaling.XPixelAsMicroSecond(1);
 
-    for (mFileIndex = 0; mFileIndex < mData.Files().count(); ++mFileIndex)
+    for (mFileIndex = 0; mFileIndex < mData.Files().size(); ++mFileIndex)
     {
         const MicroSecond samplePeriod = File().SamplePeriod();
         const IntType samplesPerPixel = pixelPeriod / samplePeriod;
@@ -678,7 +678,6 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
             DrawSampleWise(painter, fileBegin, fileEnd);
         }
     }
-
 }
 
 void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond timeBegin, MicroSecond timeEnd)
@@ -789,12 +788,12 @@ ArgumentParser::ArgumentParser():
 
 void ArgumentParser::ParseList(QStringList list)
 {
-    if (list.count() > 0)
+    if (list.size() > 0)
     {
         mApplication = list[0];
     }
 
-    for (int index = 1; index < list.count(); ++index)
+    for (int index = 1; index < list.size(); ++index)
     {
         ParseLine(list[index]);
     }
@@ -839,7 +838,7 @@ void ArgumentParser::ParseLine(const QString & line)
     }
 
     // assume filename argument
-    mFiles.append(line);
+    mFiles.push_back(line);
 }
 
 void ArgumentParser::PrintUsage()
@@ -979,7 +978,7 @@ private:
     const GuiSetup & mSetup;    
     const DataMain & mData;
     QScrollBar * mScroll;
-    QList<GuiChannel *> mChannels;
+    std::vector<GuiChannel *> mChannels;
 private slots:
     void MoveTimeBar(int)
     {
@@ -994,7 +993,7 @@ private slots:
 
     void UpdateTimeBar()
     {
-        if (mChannels.count() < 1) return;
+        if (mChannels.size() < 1) return;
         const PixelScaling scale = mSetup.Scaling();
         int page = mChannels[0]->Wave()->width();
         if (page < 2) {page = 2;}
@@ -1022,7 +1021,7 @@ public:
         {
             GuiChannel * gui = new GuiChannel(this, chan, mSetup);
             layout->addWidget(gui);
-            mChannels.append(gui);
+            mChannels.push_back(gui);
 
             if (!isResizeConnected)
             {
@@ -1158,7 +1157,7 @@ int main(int argc, char * argv[])
 
     MainWindow win;
 
-    if (arguments.Files().count() > 0)
+    if (arguments.Files().size() > 0)
     {
         win.Open(arguments.Files()[0]);
     }
