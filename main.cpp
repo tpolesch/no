@@ -454,8 +454,8 @@ private:
     void DrawPixelWise(QPainter & painter, MicroSecond timeBegin, MicroSecond timeEnd);
     const DataFile & File() const {return mData.Files()[mFileIndex];}
 
-    QPen mDefaultPen;
-    QPen mHighlightPen;
+    QPen mLinePen;
+    QPen mPointPen;
     const PixelScaling & mScaling;
     const DataChannel & mData;
     const int mYPixelOffset;
@@ -622,8 +622,8 @@ MilliVolt PixelScaling::YPixelAsMilliVolt(int px) const
 
 DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scaling,
         MicroSecond tmOffset, int ypxOffset):
-    mDefaultPen(Qt::gray, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
-    mHighlightPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
+    mLinePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
+    mPointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mScaling(scaling),
     mData(data),
     mYPixelOffset(ypxOffset),
@@ -635,10 +635,9 @@ DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scaling,
 
 void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 {
-    mDefaultPen.setColor(mDrawPoints ? Qt::gray : Qt::black);
     QPainter painter(&parent);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(mDefaultPen);
+    painter.setPen(mLinePen);
 
     DrawSamples(painter, rect);
 }
@@ -721,7 +720,7 @@ void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond timeBegin, Micro
             // We are still in the same old ypixel.
             // Tracking min and max values is sufficient.
             if (min > value) {min = value;}
-            if (max > value) {max = value;}
+            if (max < value) {max = value;}
             old = value;
         }
     }
@@ -741,6 +740,7 @@ void DrawChannel::DrawSampleWise(QPainter & painter, MicroSecond timeBegin, Micr
         if (!isnan(value)) break;
     }
         
+    if (mDrawPoints) {mLinePen.setColor(Qt::gray);}
     int xpxOld = mScaling.MicroSecondAsXPixel(time);
     int ypxOld = mYPixelOffset - mScaling.MilliVoltAsYPixel(value);
 
@@ -757,9 +757,9 @@ void DrawChannel::DrawSampleWise(QPainter & painter, MicroSecond timeBegin, Micr
 
         if (mDrawPoints)
         {
-            painter.setPen(mHighlightPen);
+            painter.setPen(mPointPen);
             painter.drawPoint(xpx, ypx);
-            painter.setPen(mDefaultPen);
+            painter.setPen(mLinePen);
         }
     }
 }
@@ -973,6 +973,7 @@ private:
 private slots:
     void MoveTimeBar(int)
     {
+        if (mScroll->isSliderDown()) {return;}
         const int pos = mScroll->value();
         const int max = mScroll->maximum();
         const int end = mScroll->pageStep() + max - 10;
@@ -1021,7 +1022,7 @@ public:
         }
         layout->addWidget(mScroll);
         setLayout(layout);
-        connect(mScroll, SIGNAL(valueChanged (int)), this, SLOT(MoveTimeBar(int)));
+        connect(mScroll, SIGNAL(valueChanged(int)), this, SLOT(MoveTimeBar(int)));
     }
     
     void Rebuild()
