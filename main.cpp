@@ -543,7 +543,6 @@ private:
     PixelScaling mScale;
     const DataChannel & mData;
     const MicroSecond mScrollTime;
-    QTime mTimer;
     size_t mFileIndex;
     bool mDrawPoints;
 };
@@ -625,17 +624,13 @@ DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scale,
     mScale(scale),
     mData(data),
     mScrollTime(scrollTime),
-    mTimer(),
     mFileIndex(0),
     mDrawPoints(false)
 {
-    mTimer.start();
 }
 
 DrawChannel::~DrawChannel()
 {
-    const MilliSecond ms = mTimer.elapsed();
-    qDebug() << "~DrawChannel after" << ms << "ms";
 }
 
 void DrawChannel::Draw(QWidget & parent, const QRect & rect)
