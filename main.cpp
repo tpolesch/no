@@ -461,7 +461,7 @@ public:
 private:
     void DrawSamples(QPainter & painter, const QRect & rect);
     void DrawSampleWise(QPainter & painter, MicroSecond time, ItFloat it, ItFloat end);
-    void DrawPixelWise(QPainter & painter, MicroSecond time, ItFloat it, ItFloat end);
+    void DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data);
     const DataFile & File() const {return mData.Files()[mFileIndex];}
 
     const QPen mLinePen;
@@ -682,7 +682,7 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
         {
             // in case of many samples per pixel it is
             // too slow to draw every single sample.
-            DrawPixelWise(painter, timeBegin, it, end);
+            DrawPixelWise(painter, rect, data);
         }
         else
         {
@@ -691,48 +691,39 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
     }
 }
 
-void DrawChannel::DrawPixelWise(QPainter & painter, MicroSecond time, ItFloat it, const ItFloat end)
+void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
-    const MicroSecond samplePeriod = File().SamplePeriod();
-    int xpxOld = mScaling.MicroSecondAsXPixel(time);
-    time += samplePeriod;
-    MilliVolt old = *it++;
-    MilliVolt min = old;
-    MilliVolt max = old;
+    const MicroSecond samplePeriod = data.SamplePeriod();
+    const MicroSecond timeOffset = mTimeOffset - data.SignalDelay();
+    const int indexEnd = data.Values().size() - 1;
+    const int xpxEnd = rect.right();
 
-    while (it < end)
+    for (int xpx = rect.left(); xpx < xpxEnd; ++xpx)
     {
-        const int xpx = mScaling.MicroSecondAsXPixel(time);
-        time += samplePeriod;
-        const MilliVolt now = *it++;
+        const MicroSecond timeFirst = mScaling.XPixelAsMicroSecond(xpx);
+        const int indexFirst = (timeFirst + timeOffset) / samplePeriod;
+        if (indexFirst < 1) continue;
 
-        if (xpx > xpxOld)
-        {
-            // We have reached a new ypixel.
-            // - Draw a line from min to max in the old ypixel
-            // - Draw a line from the last sample in the old ypixel
-            //   to the first sample in the new ypixel.
-            const int ypxMin = mYPixelOffset - mScaling.MilliVoltAsYPixel(min);
-            const int ypxMax = mYPixelOffset - mScaling.MilliVoltAsYPixel(max);
-            const int ypxOld = mYPixelOffset - mScaling.MilliVoltAsYPixel(old);
-            const int ypx    = mYPixelOffset - mScaling.MilliVoltAsYPixel(now);
+        const MicroSecond timeLast = mScaling.XPixelAsMicroSecond(xpx + 1);
+        const int indexLast = (timeLast + timeOffset) / samplePeriod;
+        if (indexLast > indexEnd) return;
 
-            painter.drawLine(xpxOld, ypxMin, xpxOld, ypxMax);
-            painter.drawLine(xpxOld, ypxOld, xpx, ypx);
+        // 1st line per xpx:
+        // - from last sample in previous xpx
+        // - to first sample in current xpx
+        auto itFirst = data.Values().begin() + indexFirst;
+        auto first = mYPixelOffset - mScaling.MilliVoltAsYPixel(*itFirst);
+        auto last = mYPixelOffset - mScaling.MilliVoltAsYPixel(*(itFirst - 1));
+        painter.drawLine(xpx - 1, last, xpx, first);
 
-            min = now;
-            max = now;
-            old = now;
-            xpxOld = xpx;
-        }
-        else
-        {
-            // We are still in the same old ypixel.
-            // Tracking min and max values is sufficient.
-            if (min > now) {min = now;}
-            if (max < now) {max = now;}
-            old = now;
-        }
+        // 2nd line per xpx:
+        // - from min sample in current xpx
+        // - to max sample in current xpx
+        auto itLast = itFirst + (indexLast - indexFirst);
+        auto minmax = std::minmax_element(itFirst, itLast);
+        auto min = mYPixelOffset - mScaling.MilliVoltAsYPixel(*minmax.first);
+        auto max = mYPixelOffset - mScaling.MilliVoltAsYPixel(*minmax.second);
+        painter.drawLine(xpx, min, xpx, max);
     }
 }
 
