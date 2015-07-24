@@ -460,12 +460,12 @@ public:
     void Draw(QWidget & parent, const QRect & rect);
 private:
     void DrawSamples(QPainter & painter, const QRect & rect);
-    void DrawSampleWise(QPainter & painter, MicroSecond time, ItFloat it, ItFloat end);
+    void DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data);
     void DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data);
     const DataFile & File() const {return mData.Files()[mFileIndex];}
 
-    const QPen mLinePen;
     const QPen mPointPen;
+    QPen mLinePen;
     const PixelScaling & mScaling;
     const DataChannel & mData;
     const int mYPixelOffset;
@@ -615,8 +615,8 @@ MilliVolt PixelScaling::YPixelAsMilliVolt(int px) const
 
 DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scaling,
         MicroSecond tmOffset, int ypxOffset):
+    mPointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mLinePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
-    mPointPen(Qt::gray, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mScaling(scaling),
     mData(data),
     mYPixelOffset(ypxOffset),
@@ -636,6 +636,7 @@ DrawChannel::~DrawChannel()
 
 void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 {
+    if (mDrawPoints) {mLinePen.setColor(Qt::gray);}
     QPainter painter(&parent);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(mLinePen);
@@ -645,48 +646,19 @@ void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
-    const MicroSecond paintBegin = mScaling.XPixelAsMicroSecond(rect.left());
-    const MicroSecond paintEnd = mScaling.XPixelAsMicroSecond(rect.right());
-    const MicroSecond pixelPeriod = mScaling.XPixelAsMicroSecond(1);
+    auto pixelPeriod = mScaling.XPixelAsMicroSecond(1);
 
     for (auto & data:mData.Files())
     {
-        const MicroSecond valueOffset = mTimeOffset - data.SignalDelay();
-        const MicroSecond samplePeriod = data.SamplePeriod();
-        const int indexMax = data.Values().size();
-        int indexBegin = (paintBegin + valueOffset) / samplePeriod;
-        int indexEnd = 2 + (paintEnd + valueOffset) / samplePeriod;
-        MicroSecond timeBegin = paintBegin;
-
-        if (indexBegin < 0)
-        {
-            timeBegin -= indexBegin * samplePeriod;
-            indexBegin = 0;
-        }
-
-        if (indexEnd > indexMax)
-        {
-            indexEnd = indexMax;
-        }
-
-        if ((indexEnd - indexBegin) < 2)
-        {
-            return;
-        }
-
-        const int samplesPerPixel = pixelPeriod / samplePeriod;
-        auto it = data.Values().begin() + indexBegin;
-        auto end = data.Values().begin() + indexEnd;
+        auto samplesPerPixel = pixelPeriod / data.SamplePeriod();
 
         if (samplesPerPixel > 9)
         {
-            // in case of many samples per pixel it is
-            // too slow to draw every single sample.
             DrawPixelWise(painter, rect, data);
         }
         else
         {
-            DrawSampleWise(painter, timeBegin, it, end);
+            DrawSampleWise(painter, rect, data);
         }
     }
 }
@@ -727,26 +699,41 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
     }
 }
 
-void DrawChannel::DrawSampleWise(QPainter & painter, MicroSecond time, ItFloat it, const ItFloat end)
+void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
-    const MicroSecond samplePeriod = File().SamplePeriod();
-    int xpxOld = mScaling.MicroSecondAsXPixel(time);
-    time += samplePeriod;
-    int ypxOld = mYPixelOffset - mScaling.MilliVoltAsYPixel(*it++);
+    const MicroSecond samplePeriod = data.SamplePeriod();
+    const MicroSecond timeOffset = mTimeOffset - data.SignalDelay();
+    const MicroSecond timeFirst = mScaling.XPixelAsMicroSecond(rect.left());
+    const MicroSecond timeLast = mScaling.XPixelAsMicroSecond(rect.right());
+    const int indexFirst = (timeFirst + timeOffset) / samplePeriod;
+    const int indexLast = (timeLast + timeOffset) / samplePeriod;
+    const int indexBegin = (indexFirst < 0) ? 0 : indexFirst;
+    const int indexMax = data.Values().size() - 1;
+    const int indexEnd = (indexLast > indexMax) ? indexMax : indexLast;
+    if ((indexEnd - indexBegin) < 2) return;
 
-    while (it < end)
+    auto now  = data.Values().begin() + indexBegin;
+    auto end  = data.Values().begin() + indexEnd;
+    auto yold = mYPixelOffset - mScaling.MilliVoltAsYPixel(*now);
+    auto time = timeFirst + (indexBegin - indexFirst) * samplePeriod;
+    auto xold = mScaling.MicroSecondAsXPixel(time);
+    ++now;
+    time += samplePeriod;
+
+    while (now < end)
     {
-        const int xpx = mScaling.MicroSecondAsXPixel(time);
+        auto ynow = mYPixelOffset - mScaling.MilliVoltAsYPixel(*now);
+        auto xnow = mScaling.MicroSecondAsXPixel(time);
+        ++now;
         time += samplePeriod;
-        const int ypx = mYPixelOffset - mScaling.MilliVoltAsYPixel(*it++);
-        painter.drawLine(xpxOld, ypxOld, xpx, ypx);
-        xpxOld = xpx;
-        ypxOld = ypx;
+        painter.drawLine(xold, yold, xnow, ynow);
+        xold = xnow;
+        yold = ynow;
 
         if (mDrawPoints)
         {
             painter.setPen(mPointPen);
-            painter.drawPoint(xpx, ypx);
+            painter.drawPoint(xnow, ynow);
             painter.setPen(mLinePen);
         }
     }
@@ -961,7 +948,6 @@ private:
 private slots:
     void MoveTimeBar(int)
     {
-        if (mScroll->isSliderDown()) {return;}
         const int pos = mScroll->value();
         const int max = mScroll->maximum();
         const int end = mScroll->pageStep() + max - 10;
