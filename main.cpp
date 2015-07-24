@@ -640,7 +640,6 @@ DrawChannel::~DrawChannel()
 
 void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 {
-    if (mDrawPoints) {mLinePen.setColor(Qt::gray);}
     QPainter painter(&parent);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(mLinePen);
@@ -663,6 +662,7 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
         }
         else
         {
+            if (mDrawPoints) {mLinePen.setColor(Qt::gray);}
             DrawSampleWise(painter, rect, data);
         }
     }
@@ -673,7 +673,7 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
     const MicroSecond samplePeriod = data.SamplePeriod();
     const MicroSecond timeOffset = mScrollTime - data.SignalDelay();
     const int indexEnd = data.Values().size() - 1;
-    const int xpxEnd = rect.right();
+    const int xpxEnd = rect.right() + 2;
 
     for (int xpx = rect.left(); xpx < xpxEnd; ++xpx)
     {
@@ -709,18 +709,18 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
     const MicroSecond samplePeriod = data.SamplePeriod();
     const MicroSecond timeOffset = mScrollTime - data.SignalDelay();
     const MicroSecond timeFirst = mScale.XPixelAsMicroSecond(rect.left());
-    const MicroSecond timeLast = mScale.XPixelAsMicroSecond(rect.right());
+    const MicroSecond timeLast = mScale.XPixelAsMicroSecond(rect.right() + 2);
     const int indexFirst = (timeFirst + timeOffset) / samplePeriod;
-    const int indexLast = (timeLast + timeOffset) / samplePeriod;
+    const int indexLast = (timeLast + timeOffset) / samplePeriod + 2;
     const int indexBegin = (indexFirst < 0) ? 0 : indexFirst;
-    const int indexMax = data.Values().size() - 1;
+    const int indexMax = data.Values().size();
     const int indexEnd = (indexLast > indexMax) ? indexMax : indexLast;
     if ((indexEnd - indexBegin) < 2) return;
 
     auto now  = data.Values().begin() + indexBegin;
     auto end  = data.Values().begin() + indexEnd;
     auto yold = mScale.LsbAsYPixel(*now);
-    auto time = timeFirst + (indexBegin - indexFirst) * samplePeriod;
+    auto time = indexBegin * samplePeriod - timeOffset;
     auto xold = mScale.MicroSecondAsXPixel(time);
     ++now;
     time += samplePeriod;
