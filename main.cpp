@@ -136,6 +136,7 @@ private:
             return;
         }
 
+        mValues.reserve(QFileInfo(fullName).size() / sizeof(qint16));
         QDataStream stream(&read);
         stream.setByteOrder(mIsBigEndian ? QDataStream::BigEndian : QDataStream::LittleEndian);
 
