@@ -10,7 +10,6 @@ typedef IntType MicroSecond;
 typedef IntType MilliSecond;
 typedef double FloatType;
 typedef FloatType MilliVolt;
-typedef std::vector<MilliVolt>::const_iterator ItFloat;
 inline static MicroSecond FromMilliSec(IntType ms)
 {
     return ms * 1000ll;
@@ -23,53 +22,63 @@ inline static MicroSecond FromMilliSec(IntType ms)
 class DataFile
 {
 private:
+    MicroSecond mSignalDelay;
+    MicroSecond mSamplePeriod;
+    double mSampleGain;
     int mErrors;
     int mSampleMask;
     int mSampleOffset;
+    int mMin;
+    int mMax;
+    std::vector<int> mValues;
     bool mIsSigned;
     bool mIsBigEndian;
-    MicroSecond mSignalDelay;
-    MicroSecond mSamplePeriod;
-    double mDivisor;
-    double mSampleGain;
     QString mTxt;
     QString mOperator;
     QString mFileName;
     QString mUnit;
     QString mLabel;
-    MilliVolt mMin;
-    MilliVolt mMax;
-    std::vector<MilliVolt> mValues;
 public:
     DataFile & operator=(const DataFile &) = default;
     DataFile(const DataFile &) = default;
     DataFile() = delete;
     explicit DataFile(const QString & txt, const QString & path):
+        mSignalDelay(0),
+        mSamplePeriod(0),
+        mSampleGain(1.0),
         mErrors(0),
         mSampleMask(0xffff),
         mSampleOffset(0),
+        mMin(0),
+        mMax(0),
+        mValues(),
         mIsSigned(true),
         mIsBigEndian(true),
-        mSignalDelay(0),
-        mSamplePeriod(0),
-        mDivisor(1.0),
-        mSampleGain(1.0),
         mTxt(txt),
         mOperator(""),
         mFileName(""),
         mUnit(""),
-        mLabel(""),
-        mMin(NAN),
-        mMax(NAN),
-        mValues()
+        mLabel("")
     {
         Parse();
         if (mFileName.size() > 0) {SetSamples(path);}
     }
 
-    MilliVolt Min() const {return mMin;}
-    MilliVolt Max() const {return mMax;}
+    MilliVolt Min() const
+    {
+        return SampleGain() * mMin;
+    }
     
+    MilliVolt Max() const
+    {
+        return SampleGain() * mMax;
+    }
+    
+    double SampleGain() const
+    {
+        return mSampleGain;
+    }
+
     MicroSecond SamplePeriod() const
     {
         return mSamplePeriod;
@@ -85,17 +94,9 @@ public:
         return mSignalDelay + SamplePeriod() * mValues.size();
     }
     
-    const std::vector<MilliVolt> & Values() const
+    const std::vector<int> & Values() const
     {
         return mValues;
-    }
-
-    double At(MicroSecond us) const
-    {
-        const int index = (us - mSignalDelay) / SamplePeriod();
-        return ((index >= 0) && (index < static_cast<int>(mValues.size())))
-            ? mValues[index]
-            : NAN;
     }
 
     bool IsValid() const
@@ -110,18 +111,27 @@ public:
 
     void Minus(const DataFile & other)
     {
-        std::vector<MilliVolt> result;
+        std::vector<int> result;
 
-        for (IntType us = 0; us < Duration(); us += SamplePeriod())
+        for (MicroSecond us = 0; us < Duration(); us += SamplePeriod())
         {
             const MilliVolt a = At(us);
             const MilliVolt b = other.At(us);
             if (isnan(a) || (isnan(b))) continue;
-            result.push_back(a - b);
+            const int lsb = static_cast<int>((a - b) / SampleGain());
+            result.push_back(lsb);
         }
 
         mValues = result;
         mSignalDelay = 0;
+    }
+
+    double At(MicroSecond us) const
+    {
+        const int index = (us - mSignalDelay) / SamplePeriod();
+        return ((index >= 0) && (index < static_cast<int>(mValues.size())))
+            ? (mSampleGain * mValues[index])
+            : NAN;
     }
 private:
     void SetSamples(const QString & path)
@@ -139,6 +149,7 @@ private:
         mValues.reserve(QFileInfo(fullName).size() / sizeof(qint16));
         QDataStream stream(&read);
         stream.setByteOrder(mIsBigEndian ? QDataStream::BigEndian : QDataStream::LittleEndian);
+        bool isFirst = true;
 
         while (!stream.atEnd())
         {
@@ -158,10 +169,10 @@ private:
                 lsb = static_cast<int>(sample & mask) - mSampleOffset;
             }
 
-            const MilliVolt mv = mSampleGain * lsb;
-            if (isnan(mMin) || (mMin > mv)) {mMin = mv;}
-            if (isnan(mMax) || (mMax < mv)) {mMax = mv;}
-            mValues.push_back(mv);
+            mValues.push_back(lsb);
+            if (isFirst || (mMin > lsb)) {mMin = lsb;}
+            if (isFirst || (mMax < lsb)) {mMax = lsb;}
+            isFirst = false;
         }
 
         read.close();
@@ -174,6 +185,7 @@ private:
             mTxt = "> " + mTxt;
         }
 
+        double div = 1.0;
         int optPos = -1;
         bool isValid = true;
         QRegularExpression re("^([>+-])\\s*(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s*");
@@ -185,7 +197,7 @@ private:
             mOperator = match.captured(1);
             mFileName = match.captured(2);
             if (isValid) {sps = match.captured(3).toInt(&isValid);}
-            if (isValid) {mDivisor = match.captured(4).toDouble(&isValid);}
+            if (isValid) {div = match.captured(4).toDouble(&isValid);}
             mUnit = match.captured(5);
             mLabel = match.captured(6);
             optPos = match.capturedEnd(0);
@@ -208,7 +220,7 @@ private:
         if (isValid && Find(dst, optPos, "s-mask")) {mSampleMask   = dst.toInt(&isValid, 0);}
         if (isValid && Find(dst, optPos, "offset")) {mSampleOffset = dst.toInt(&isValid, 0);}
         if (isValid && Find(dst, optPos, "delay"))  {mSignalDelay  = FromMilliSec(dst.toInt(&isValid, 0));}
-        if (isValid && Find(dst, optPos, "gain"))   {mSampleGain   = dst.toDouble(&isValid);}
+        if (isValid && Find(dst, optPos, "gain"))   {mSampleGain   = dst.toDouble(&isValid) / div;}
         if (!isValid) {AddError();}
 
         if (mSampleMask == 0x3fff)
@@ -437,9 +449,18 @@ public:
     MilliSecond XPixelAsMilliSecond(int xpx) const;
     MicroSecond XPixelAsMicroSecond(int xpx) const;
     MilliVolt YPixelAsMilliVolt(int ypx) const;
+
+    void SetLsbGain(double arg) {mLsbGain = arg;}
+    void SetLsbOffset(int arg) {mLsbOffset = arg;}
+    int LsbAsYPixel(int lsb) const
+    {
+        return mLsbOffset - MilliVoltAsYPixel(mLsbGain * lsb);
+    }
 private:
     static double MilliMeterPerMilliVolt() {return 10.0;}
     static double MilliMeterPerSecond() {return 25.0;}
+    double mLsbGain;
+    int mLsbOffset;
     int mXmm;
     int mXpx;
     int mYmm;
@@ -454,8 +475,8 @@ class DrawChannel
 {
 public:
     ~DrawChannel();
-    explicit DrawChannel(const DataChannel & data, const PixelScaling & scaling,
-            MicroSecond tmOffset, int ypxOffset);
+    explicit DrawChannel(const DataChannel & data, const PixelScaling & scale,
+            MicroSecond scrollTime);
     void SetDrawPoints(bool arg) {mDrawPoints = arg;}
     void Draw(QWidget & parent, const QRect & rect);
 private:
@@ -466,10 +487,9 @@ private:
 
     const QPen mPointPen;
     QPen mLinePen;
-    const PixelScaling & mScaling;
+    PixelScaling mScale;
     const DataChannel & mData;
-    const int mYPixelOffset;
-    const MicroSecond mTimeOffset;
+    const MicroSecond mScrollTime;
     QTime mTimer;
     size_t mFileIndex;
     bool mDrawPoints;
@@ -545,7 +565,9 @@ private:
 // class PixelScaling
 ////////////////////////////////////////////////////////////////////////////////
 
-PixelScaling::PixelScaling(int xzoom, int yzoom)
+PixelScaling::PixelScaling(int xzoom, int yzoom):
+    mLsbGain(1.0),
+    mLsbOffset(0)
 {
     const QDesktopWidget desk;
     mXmm = desk.widthMM();
@@ -613,14 +635,13 @@ MilliVolt PixelScaling::YPixelAsMilliVolt(int px) const
 // class DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
 
-DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scaling,
-        MicroSecond tmOffset, int ypxOffset):
+DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scale,
+        MicroSecond scrollTime):
     mPointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mLinePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
-    mScaling(scaling),
+    mScale(scale),
     mData(data),
-    mYPixelOffset(ypxOffset),
-    mTimeOffset(tmOffset),
+    mScrollTime(scrollTime),
     mTimer(),
     mFileIndex(0),
     mDrawPoints(false)
@@ -646,10 +667,11 @@ void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
-    auto pixelPeriod = mScaling.XPixelAsMicroSecond(1);
+    auto pixelPeriod = mScale.XPixelAsMicroSecond(1);
 
     for (auto & data:mData.Files())
     {
+        mScale.SetLsbGain(data.SampleGain());
         auto samplesPerPixel = pixelPeriod / data.SamplePeriod();
 
         if (samplesPerPixel > 9)
@@ -666,17 +688,17 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
     const MicroSecond samplePeriod = data.SamplePeriod();
-    const MicroSecond timeOffset = mTimeOffset - data.SignalDelay();
+    const MicroSecond timeOffset = mScrollTime - data.SignalDelay();
     const int indexEnd = data.Values().size() - 1;
     const int xpxEnd = rect.right();
 
     for (int xpx = rect.left(); xpx < xpxEnd; ++xpx)
     {
-        const MicroSecond timeFirst = mScaling.XPixelAsMicroSecond(xpx);
+        const MicroSecond timeFirst = mScale.XPixelAsMicroSecond(xpx);
         const int indexFirst = (timeFirst + timeOffset) / samplePeriod;
         if (indexFirst < 1) continue;
 
-        const MicroSecond timeLast = mScaling.XPixelAsMicroSecond(xpx + 1);
+        const MicroSecond timeLast = mScale.XPixelAsMicroSecond(xpx + 1);
         const int indexLast = (timeLast + timeOffset) / samplePeriod;
         if (indexLast > indexEnd) return;
 
@@ -684,8 +706,8 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
         // - from last sample in previous xpx
         // - to first sample in current xpx
         auto itFirst = data.Values().begin() + indexFirst;
-        auto first = mYPixelOffset - mScaling.MilliVoltAsYPixel(*itFirst);
-        auto last = mYPixelOffset - mScaling.MilliVoltAsYPixel(*(itFirst - 1));
+        auto first = mScale.LsbAsYPixel(*itFirst);
+        auto last = mScale.LsbAsYPixel(*(itFirst - 1));
         painter.drawLine(xpx - 1, last, xpx, first);
 
         // 2nd line per xpx:
@@ -693,8 +715,8 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
         // - to max sample in current xpx
         auto itLast = itFirst + (indexLast - indexFirst);
         auto minmax = std::minmax_element(itFirst, itLast);
-        auto min = mYPixelOffset - mScaling.MilliVoltAsYPixel(*minmax.first);
-        auto max = mYPixelOffset - mScaling.MilliVoltAsYPixel(*minmax.second);
+        auto min = mScale.LsbAsYPixel(*minmax.first);
+        auto max = mScale.LsbAsYPixel(*minmax.second);
         painter.drawLine(xpx, min, xpx, max);
     }
 }
@@ -702,9 +724,9 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
 void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
     const MicroSecond samplePeriod = data.SamplePeriod();
-    const MicroSecond timeOffset = mTimeOffset - data.SignalDelay();
-    const MicroSecond timeFirst = mScaling.XPixelAsMicroSecond(rect.left());
-    const MicroSecond timeLast = mScaling.XPixelAsMicroSecond(rect.right());
+    const MicroSecond timeOffset = mScrollTime - data.SignalDelay();
+    const MicroSecond timeFirst = mScale.XPixelAsMicroSecond(rect.left());
+    const MicroSecond timeLast = mScale.XPixelAsMicroSecond(rect.right());
     const int indexFirst = (timeFirst + timeOffset) / samplePeriod;
     const int indexLast = (timeLast + timeOffset) / samplePeriod;
     const int indexBegin = (indexFirst < 0) ? 0 : indexFirst;
@@ -714,16 +736,16 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
 
     auto now  = data.Values().begin() + indexBegin;
     auto end  = data.Values().begin() + indexEnd;
-    auto yold = mYPixelOffset - mScaling.MilliVoltAsYPixel(*now);
+    auto yold = mScale.LsbAsYPixel(*now);
     auto time = timeFirst + (indexBegin - indexFirst) * samplePeriod;
-    auto xold = mScaling.MicroSecondAsXPixel(time);
+    auto xold = mScale.MicroSecondAsXPixel(time);
     ++now;
     time += samplePeriod;
 
     while (now < end)
     {
-        auto ynow = mYPixelOffset - mScaling.MilliVoltAsYPixel(*now);
-        auto xnow = mScaling.MicroSecondAsXPixel(time);
+        auto ynow = mScale.LsbAsYPixel(*now);
+        auto xnow = mScale.MicroSecondAsXPixel(time);
         ++now;
         time += samplePeriod;
         painter.drawLine(xold, yold, xnow, ynow);
@@ -851,7 +873,7 @@ public:
         mData(data),
         mSetup(setup),
         mMeasure(new GuiMeasure(this)),
-        mTimeOffset(0)
+        mScrollTime(0)
     {
         const PixelScaling scale = mSetup.Scaling();
         const int x = scale.MilliMeterAsXPixel(25);
@@ -863,9 +885,9 @@ public:
         Rebuild();
     }
 
-    void SetTimeOffset(MicroSecond offset)
+    void SetScrollTime(MicroSecond scrollTime)
     {
-        mTimeOffset = offset;
+        mScrollTime = scrollTime;
         update();
     }
     
@@ -891,7 +913,7 @@ private:
     const DataChannel & mData;
     const GuiSetup & mSetup;
     GuiMeasure * mMeasure;
-    MicroSecond mTimeOffset;
+    MicroSecond mScrollTime;
 
     void mousePressEvent(QMouseEvent * evt) override
     {
@@ -902,11 +924,11 @@ private:
 
     void paintEvent(QPaintEvent * e) override
     {
-        const PixelScaling scale = mSetup.Scaling();
+        PixelScaling scale = mSetup.Scaling();
         const int viewOffset = height() / 2;
         const int dataOffset = scale.MilliVoltAsYPixel(mData.Max() + mData.Min()) / 2;
-        const int ypxOffset = viewOffset + dataOffset;
-        DrawChannel draw(mData, scale, mTimeOffset, ypxOffset);
+        scale.SetLsbOffset(viewOffset + dataOffset);
+        DrawChannel draw(mData, scale, mScrollTime);
         draw.SetDrawPoints(mSetup.drawPoints);
         draw.Draw(*this, e->rect());
     }
@@ -952,8 +974,8 @@ private slots:
         const int max = mScroll->maximum();
         const int end = mScroll->pageStep() + max - 10;
         const MicroSecond duration = mData.Duration();
-        const MicroSecond offset = duration * pos / end;
-        for (auto chan:mChannels) {chan->Wave()->SetTimeOffset(offset);}
+        const MicroSecond scrollTime = duration * pos / end;
+        for (auto chan:mChannels) {chan->Wave()->SetScrollTime(scrollTime);}
     }
 
     void UpdateTimeBar()
