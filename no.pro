@@ -1,11 +1,10 @@
 TARGET = no
 TEMPLATE = app
-CONFIG += c++11
 #CONFIG += debug
-CONFIG += release
+#DEFINES += MEASURE_PERFORMANCE
+CONFIG += c++11
 QT += widgets
 CXXFLAGS += -Wall
-DEFINES += MEASURE_PERFORMANCE
 SOURCES += main.cpp
 INCLUDEPATH += /home/m5/sw/utility/CurrentWork/include
 QMAKE_POST_LINK = "./$$TARGET --test"

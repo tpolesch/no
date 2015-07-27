@@ -16,6 +16,38 @@ inline static MicroSecond FromMilliSec(IntType ms)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// MeasurePerformance
+////////////////////////////////////////////////////////////////////////////////
+
+#ifdef MEASURE_PERFORMANCE
+class MeasurePerformance
+{
+private:
+    const char * mName;
+    QTime mTimer;
+public:
+    MeasurePerformance(const char * name):
+        mName(name),
+        mTimer()
+    {
+        mTimer.start();
+    }
+
+    ~MeasurePerformance()
+    {
+        qDebug() << mName << mTimer.elapsed() << "ms";
+    }
+};
+#else
+class MeasurePerformance
+{
+public:
+    MeasurePerformance(const char *) {}
+    ~MeasurePerformance() {}
+};
+#endif
+
+////////////////////////////////////////////////////////////////////////////////
 // DataFile
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -351,8 +383,7 @@ public:
         mDuration(0),
         mIsValid(false)
     {
-        QTime timer;
-        timer.start();
+        MeasurePerformance measure("DataMain::ctor");
         QFile info(infoName);
 
         if (!info.open(QIODevice::ReadOnly))
@@ -399,9 +430,6 @@ public:
             chan.SetComplete();
             if (mDuration < chan.Duration()) {mDuration = chan.Duration();}
         }
-
-        const MilliSecond ms = timer.elapsed();
-        qDebug() << "DataMain::ctor took" << ms << "ms";
     }
     
     bool IsValid() const {return mIsValid;}
@@ -519,38 +547,6 @@ PixelScaling::PixelScaling(int xzoom, int yzoom):
     if (xzoom < 0) {mXmm *= (1 << (-xzoom));}
     if (yzoom < 0) {mYmm *= (1 << (-yzoom));}
 }
-
-////////////////////////////////////////////////////////////////////////////////
-// MeasurePerformance
-////////////////////////////////////////////////////////////////////////////////
-
-#ifdef MEASURE_PERFORMANCE
-class MeasurePerformance
-{
-private:
-    const char * mName;
-    QTime mTimer;
-public:
-    MeasurePerformance(const char * name):
-        mName(name),
-        mTimer()
-    {
-        mTimer.start();
-    }
-
-    ~MeasurePerformance()
-    {
-        qDebug() << mName << mTimer.elapsed() << "ms";
-    }
-};
-#else
-class MeasurePerformance
-{
-public:
-    MeasurePerformance(const char *) {}
-    ~MeasurePerformance() {}
-};
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // DrawChannel
