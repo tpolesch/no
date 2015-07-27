@@ -595,7 +595,7 @@ public:
         layout->addWidget(grip, 0, Qt::AlignRight | Qt::AlignBottom);
     }
 signals:
-    void SignalRecalculate();
+    void resizeSignal();
 private:
     void mousePressEvent(QMouseEvent *evt) override
     {
@@ -611,7 +611,7 @@ private:
 
     void resizeEvent(QResizeEvent *) override
     {
-        emit SignalRecalculate();
+        emit resizeSignal();
     }
 
     QPoint mLastPos;
@@ -879,16 +879,8 @@ public:
         QWidget(parent),
         mData(data),
         mSetup(setup),
-        mMeasure(new GuiMeasure(this)),
         mScrollTime(0)
     {
-        const PixelScaling scale = mSetup.Scaling();
-        const int x = scale.MilliMeterAsXPixel(25);
-        const int y = scale.MilliMeterAsYPixel(10);
-        mMeasure->move(x, y);
-        mMeasure->resize(x, y);
-        mMeasure->setMinimumSize(25, 25);
-        connect(mMeasure, SIGNAL(SignalRecalculate()), this, SLOT(UpdateMeasurement()));
         Rebuild();
     }
 
@@ -897,37 +889,20 @@ public:
         mScrollTime = scrollTime;
         update();
     }
-    
+
     void Rebuild()
     {
         const PixelScaling scale = mSetup.Scaling();
         setMinimumHeight(scale.MilliVoltAsYPixel(mData.Max() - mData.Min()));
-        UpdateMeasurement();
         update();
     }
 signals:
-    void SignalResize();
-private slots:
-    void UpdateMeasurement()
-    {
-        const PixelScaling scale = mSetup.Scaling();
-        const MilliSecond ms = scale.XPixelAsMilliSecond(mMeasure->width());
-        const MilliVolt mv = scale.YPixelAsMilliVolt(mMeasure->height());
-        QString txt = QString("%1ms, %2mV").arg(ms).arg(mv);
-        qDebug() << txt;
-    }
+    void resizeSignal();
+    void clickSignal(GuiWave *, QMouseEvent *);
 private:
     const DataChannel & mData;
     const GuiSetup & mSetup;
-    GuiMeasure * mMeasure;
     MicroSecond mScrollTime;
-
-    void mousePressEvent(QMouseEvent * evt) override
-    {
-        QRect frame = mMeasure->rect();
-        frame.moveCenter(evt->pos());
-        mMeasure->move(frame.topLeft());
-    }
 
     void paintEvent(QPaintEvent * e) override
     {
@@ -939,9 +914,14 @@ private:
         draw.Draw(*this, e->rect());
     }
 
+    void mousePressEvent(QMouseEvent * evt) override
+    {
+        emit clickSignal(this, evt);
+    }
+
     void resizeEvent(QResizeEvent *) override
     {
-        emit SignalResize();
+        emit resizeSignal();
     }
 };
 
@@ -972,9 +952,11 @@ private:
     const GuiSetup & mSetup;    
     const DataMain & mData;
     QScrollBar * mScroll;
+    GuiMeasure * mMeasure;
+    GuiWave * mMeasuredWave;
     std::vector<GuiChannel *> mChannels;
 private slots:
-    void MoveTimeBar(int)
+    void scrolledSlot(int)
     {
         const int pos = mScroll->value();
         const int max = mScroll->maximum();
@@ -984,7 +966,7 @@ private slots:
         for (auto chan:mChannels) {chan->Wave()->SetScrollTime(scrollTime);}
     }
 
-    void UpdateTimeBar()
+    void waveResizeSlot()
     {
         if (mChannels.size() < 1) return;
         const PixelScaling scale = mSetup.Scaling();
@@ -1000,12 +982,36 @@ private slots:
         mScroll->setPageStep(page);
         mScroll->setSingleStep(page / 2);
     }
+
+    void guiMeasureResizeSlot()
+    {
+        const PixelScaling scale = mSetup.Scaling();
+        const MilliSecond ms = scale.XPixelAsMilliSecond(mMeasure->width());
+        const MilliVolt mv = scale.YPixelAsMilliVolt(mMeasure->height());
+        QString txt = QString("%1ms, %2mV").arg(ms).arg(mv);
+        qDebug() << txt;
+    }
+
+    void waveClickSlot(GuiWave * sender, QMouseEvent * event)
+    {
+        if (mMeasuredWave != sender)
+        {
+            mMeasuredWave = sender;
+            mMeasure = NewMeasure(sender);
+        }
+
+        QRect frame = mMeasure->rect();
+        frame.moveCenter(event->pos());
+        mMeasure->move(frame.topLeft());
+    }
 public:
     GuiMain(QWidget * parent, const GuiSetup & setup, const DataMain & data):
         QWidget(parent),
         mSetup(setup),
         mData(data),
         mScroll(new QScrollBar(Qt::Horizontal, this)),
+        mMeasure(nullptr),
+        mMeasuredWave(nullptr),
         mChannels()
     {
         QVBoxLayout * layout = new QVBoxLayout(this);
@@ -1015,22 +1021,52 @@ public:
             GuiChannel * gui = new GuiChannel(this, chan, mSetup);
             layout->addWidget(gui);
             mChannels.push_back(gui);
+            connect(gui->Wave(), SIGNAL(clickSignal(GuiWave *, QMouseEvent *)),
+                    this, SLOT(waveClickSlot(GuiWave *, QMouseEvent *)));
 
             if (!isResizeConnected)
             {
                 isResizeConnected = true;
-                connect(gui->Wave(), SIGNAL(SignalResize()), this, SLOT(UpdateTimeBar()));
+                connect(gui->Wave(), SIGNAL(resizeSignal()), this, SLOT(waveResizeSlot()));
             }
         }
         layout->addWidget(mScroll);
         setLayout(layout);
-        connect(mScroll, SIGNAL(valueChanged(int)), this, SLOT(MoveTimeBar(int)));
+        connect(mScroll, SIGNAL(valueChanged(int)), this, SLOT(scrolledSlot(int)));
     }
     
     void Rebuild()
     {
         for (auto chan:mChannels) {chan->Wave()->Rebuild();}
-        UpdateTimeBar();
+        waveResizeSlot();
+        guiMeasureResizeSlot();
+    }
+private:
+    GuiMeasure * NewMeasure(QWidget * parent)
+    {
+        int w;
+        int h;
+
+        if (mMeasure)
+        {
+            w = mMeasure->width();
+            h = mMeasure->height();
+            delete mMeasure;
+            mMeasure = nullptr;
+        }
+        else
+        {
+            const PixelScaling scale = mSetup.Scaling();
+            w = scale.MilliMeterAsXPixel(25);
+            h = scale.MilliMeterAsYPixel(10);
+        }
+
+        GuiMeasure * gui = new GuiMeasure(parent);
+        gui->resize(w, h);
+        gui->setMinimumSize(25, 25);
+        gui->show();
+        connect(gui, SIGNAL(resizeSignal()), this, SLOT(guiMeasureResizeSlot()));
+        return gui;
     }
 };
 
