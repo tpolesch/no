@@ -5,6 +5,7 @@ CONFIG += c++11
 CONFIG += release
 QT += widgets
 CXXFLAGS += -Wall
+DEFINES += MEASURE_PERFORMANCE
 SOURCES += main.cpp
 INCLUDEPATH += /home/m5/sw/utility/CurrentWork/include
 QMAKE_POST_LINK = "./$$TARGET --test"

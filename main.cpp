@@ -521,30 +521,61 @@ PixelScaling::PixelScaling(int xzoom, int yzoom):
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// MeasurePerformance
+////////////////////////////////////////////////////////////////////////////////
+
+#ifdef MEASURE_PERFORMANCE
+class MeasurePerformance
+{
+private:
+    const char * mName;
+    QTime mTimer;
+public:
+    MeasurePerformance(const char * name):
+        mName(name),
+        mTimer()
+    {
+        mTimer.start();
+    }
+
+    ~MeasurePerformance()
+    {
+        qDebug() << mName << mTimer.elapsed() << "ms";
+    }
+};
+#else
+class MeasurePerformance
+{
+public:
+    MeasurePerformance(const char *) {}
+    ~MeasurePerformance() {}
+};
+#endif
+
+////////////////////////////////////////////////////////////////////////////////
 // DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
+
+
 
 class DrawChannel
 {
 public:
-    ~DrawChannel();
     explicit DrawChannel(const DataChannel & data, const PixelScaling & scale,
             MicroSecond scrollTime);
-    void SetDrawPoints(bool arg) {mDrawPoints = arg;}
     void Draw(QWidget & parent, const QRect & rect);
 private:
     void DrawSamples(QPainter & painter, const QRect & rect);
     void DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data);
     void DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data);
-    const DataFile & File() const {return mData.Files()[mFileIndex];}
 
+    MeasurePerformance mMeasurePerformance;
+    double mSamplesPerPixel;
     const QPen mPointPen;
     QPen mLinePen;
     PixelScaling mScale;
     const DataChannel & mData;
     const MicroSecond mScrollTime;
-    size_t mFileIndex;
-    bool mDrawPoints;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -619,17 +650,13 @@ private:
 
 DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scale,
         MicroSecond scrollTime):
+    mMeasurePerformance("DrawChannel"),
+    mSamplesPerPixel(0),
     mPointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mLinePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mScale(scale),
     mData(data),
-    mScrollTime(scrollTime),
-    mFileIndex(0),
-    mDrawPoints(false)
-{
-}
-
-DrawChannel::~DrawChannel()
+    mScrollTime(scrollTime)
 {
 }
 
@@ -644,20 +671,19 @@ void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
-    auto pixelPeriod = mScale.XPixelAsMicroSecond(1);
+    const double pixelPeriod = mScale.XPixelAsMicroSecond(1);
 
     for (auto & data:mData.Files())
     {
         mScale.SetLsbGain(data.SampleGain());
-        auto samplesPerPixel = pixelPeriod / data.SamplePeriod();
+        mSamplesPerPixel = pixelPeriod / data.SamplePeriod();
 
-        if (samplesPerPixel > 9)
+        if (mSamplesPerPixel > 5)
         {
             DrawPixelWise(painter, rect, data);
         }
         else
         {
-            if (mDrawPoints) {mLinePen.setColor(Qt::gray);}
             DrawSampleWise(painter, rect, data);
         }
     }
@@ -712,6 +738,7 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
     const int indexEnd = (indexLast > indexMax) ? indexMax : indexLast;
     if ((indexEnd - indexBegin) < 2) return;
 
+    const bool drawPoints = mSamplesPerPixel < 0.5;
     auto now  = data.Values().begin() + indexBegin;
     auto end  = data.Values().begin() + indexEnd;
     auto yold = mScale.LsbAsYPixel(*now);
@@ -719,6 +746,14 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
     auto xold = mScale.MicroSecondAsXPixel(time);
     ++now;
     time += samplePeriod;
+
+    if (drawPoints)
+    {
+        painter.setPen(mPointPen);
+        painter.drawPoint(xold, yold);
+        mLinePen.setColor(Qt::gray);
+        painter.setPen(mLinePen);
+    }
 
     while (now < end)
     {
@@ -730,7 +765,7 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
         xold = xnow;
         yold = ynow;
 
-        if (mDrawPoints)
+        if (drawPoints)
         {
             painter.setPen(mPointPen);
             painter.drawPoint(xnow, ynow);
@@ -826,13 +861,11 @@ struct GuiSetup
     QString fileName;
     int xzoom;
     int yzoom;
-    bool drawPoints;
 
     GuiSetup():
         fileName(),
         xzoom(0),
-        yzoom(0),
-        drawPoints(false)
+        yzoom(0)
     {
     }
 
@@ -907,7 +940,6 @@ private:
         const int dataOffset = scale.MilliVoltAsYPixel(mData.Max() + mData.Min()) / 2;
         scale.SetLsbOffset(viewOffset + dataOffset);
         DrawChannel draw(mData, scale, mScrollTime);
-        draw.SetDrawPoints(mSetup.drawPoints);
         draw.Draw(*this, e->rect());
     }
 
@@ -1026,7 +1058,6 @@ private slots:
     void XZoomOut() {mSetup.xzoom--; Rebuild();}
     void YZoomIn()  {mSetup.yzoom++; Rebuild();}
     void YZoomOut() {mSetup.yzoom--; Rebuild();}
-    void Points(bool arg) {mSetup.drawPoints = arg; Rebuild();}
 public:
     MainWindow():
         mSetup(),
@@ -1058,13 +1089,6 @@ public:
         ACTION(viewMenu, "Y-Zoom-In", YZoomIn, Qt::Key_Y);
         ACTION(viewMenu, "Y-Zoom-Out", YZoomOut, Qt::Key_Y + Qt::SHIFT);
 #undef ACTION
-        QAction * points = new QAction(tr("&Draw Points"), this);
-        points->setShortcut(QKeySequence(Qt::Key_P));
-        points->setChecked(mSetup.drawPoints);
-        points->setCheckable(true);
-        connect(points, SIGNAL(triggered(bool)), this, SLOT(Points(bool)));
-        viewMenu->addAction(points);
-        addAction(points);
     }
 
     ~MainWindow()
