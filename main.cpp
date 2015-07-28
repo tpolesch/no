@@ -595,7 +595,8 @@ public:
         layout->addWidget(grip, 0, Qt::AlignRight | Qt::AlignBottom);
     }
 signals:
-    void resizeSignal();
+    void signalResized();
+    void signalMoved();
 private:
     void mousePressEvent(QMouseEvent *evt) override
     {
@@ -609,9 +610,14 @@ private:
         mLastPos = evt->globalPos();
     }
 
+    void mouseReleaseEvent(QMouseEvent *) override
+    {
+        emit signalMoved();
+    }
+
     void resizeEvent(QResizeEvent *) override
     {
-        emit resizeSignal();
+        emit signalResized();
     }
 
     QPoint mLastPos;
@@ -881,24 +887,28 @@ public:
         mSetup(setup),
         mScrollTime(0)
     {
-        Rebuild();
+        rebuild();
     }
 
-    void SetScrollTime(MicroSecond scrollTime)
+    void setScrollTime(MicroSecond scrollTime)
     {
         mScrollTime = scrollTime;
-        update();
     }
 
-    void Rebuild()
+    void rebuild()
     {
         const PixelScaling scale = mSetup.Scaling();
         setMinimumHeight(scale.MilliVoltAsYPixel(mData.Max() - mData.Min()));
         update();
     }
+
+    MicroSecond ScrollTime() const
+    {
+        return mScrollTime;
+    }
 signals:
-    void resizeSignal();
-    void clickSignal(GuiWave *, QMouseEvent *);
+    void signalResized();
+    void signalClicked(GuiWave *, QMouseEvent *);
 private:
     const DataChannel & mData;
     const GuiSetup & mSetup;
@@ -916,12 +926,12 @@ private:
 
     void mousePressEvent(QMouseEvent * evt) override
     {
-        emit clickSignal(this, evt);
+        emit signalClicked(this, evt);
     }
 
     void resizeEvent(QResizeEvent *) override
     {
-        emit resizeSignal();
+        emit signalResized();
     }
 };
 
@@ -954,55 +964,70 @@ private:
     QScrollBar * mScroll;
     GuiMeasure * mMeasure;
     GuiWave * mMeasuredWave;
+    int mFocusXpx;
+    MicroSecond mFocusTime;
+    MicroSecond mScrollTime;
     std::vector<GuiChannel *> mChannels;
 private slots:
-    void scrolledSlot(int)
+    void slotScrolled(int)
     {
-        const int pos = mScroll->value();
-        const int max = mScroll->maximum();
-        const int end = mScroll->pageStep() + max - 10;
-        const MicroSecond duration = mData.Duration();
-        const MicroSecond scrollTime = duration * pos / end;
-        for (auto chan:mChannels) {chan->Wave()->SetScrollTime(scrollTime);}
+        double value = mData.Duration();
+        value *= mScroll->value();
+        value /= (mScroll->maximum() + mScroll->pageStep());
+        setScrollTime(static_cast<MicroSecond>(value));
+        setFocus("slotScrolled");
+        rebuild();
     }
 
-    void waveResizeSlot()
+    void slotWaveResized()
     {
         if (mChannels.size() < 1) return;
         const PixelScaling scale = mSetup.Scaling();
         int page = mChannels[0]->Wave()->width();
-        if (page < 2) {page = 2;}
+        if (page < 4) {page = 4;}
         int end = scale.MicroSecondAsXPixel(mData.Duration());
-        if (end < 2) {end = 2;}
+        if (end < 4) {end = 4;}
         int max = end - page;
         if (max < 0) {max = 0;}
-        mScroll->setValue(0);
-        mScroll->setMinimum(0);
+        const int min = 0;
+        int value = scale.MicroSecondAsXPixel(scrollTime());
+        if (value < min) {value = min;}
+        if (value > max) {value = max;}
+        mScroll->setMinimum(min);
         mScroll->setMaximum(max);
+        mScroll->setValue(value);
         mScroll->setPageStep(page);
-        mScroll->setSingleStep(page / 2);
+        mScroll->setSingleStep(page / 4);
+        rebuild();
     }
 
-    void guiMeasureResizeSlot()
+    void slotGuiMeasureMoved()
+    {
+        setFocus("slotGuiMeasureMoved");
+    }
+
+    void slotGuiMeasureResized()
     {
         const PixelScaling scale = mSetup.Scaling();
         const MilliSecond ms = scale.XPixelAsMilliSecond(mMeasure->width());
         const MilliVolt mv = scale.YPixelAsMilliVolt(mMeasure->height());
         QString txt = QString("%1ms, %2mV").arg(ms).arg(mv);
         qDebug() << txt;
+        setFocus("slotGuiMeasureResized");
     }
 
-    void waveClickSlot(GuiWave * sender, QMouseEvent * event)
+    void slotWaveClicked(GuiWave * sender, QMouseEvent * event)
     {
         if (mMeasuredWave != sender)
         {
             mMeasuredWave = sender;
-            mMeasure = NewMeasure(sender);
+            mMeasure = createMeasure(sender);
         }
 
         QRect frame = mMeasure->rect();
         frame.moveCenter(event->pos());
         mMeasure->move(frame.topLeft());
+        setFocus("slotWaveClicked");
     }
 public:
     GuiMain(QWidget * parent, const GuiSetup & setup, const DataMain & data):
@@ -1012,6 +1037,9 @@ public:
         mScroll(new QScrollBar(Qt::Horizontal, this)),
         mMeasure(nullptr),
         mMeasuredWave(nullptr),
+        mFocusXpx(0),
+        mFocusTime(0),
+        mScrollTime(0),
         mChannels()
     {
         QVBoxLayout * layout = new QVBoxLayout(this);
@@ -1021,28 +1049,58 @@ public:
             GuiChannel * gui = new GuiChannel(this, chan, mSetup);
             layout->addWidget(gui);
             mChannels.push_back(gui);
-            connect(gui->Wave(), SIGNAL(clickSignal(GuiWave *, QMouseEvent *)),
-                    this, SLOT(waveClickSlot(GuiWave *, QMouseEvent *)));
+            connect(gui->Wave(), SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
+                    this, SLOT(slotWaveClicked(GuiWave *, QMouseEvent *)));
 
             if (!isResizeConnected)
             {
                 isResizeConnected = true;
-                connect(gui->Wave(), SIGNAL(resizeSignal()), this, SLOT(waveResizeSlot()));
+                connect(gui->Wave(), SIGNAL(signalResized()), this, SLOT(slotWaveResized()));
             }
         }
         layout->addWidget(mScroll);
         setLayout(layout);
-        connect(mScroll, SIGNAL(valueChanged(int)), this, SLOT(scrolledSlot(int)));
+        connect(mScroll, SIGNAL(valueChanged(int)), this, SLOT(slotScrolled(int)));
     }
     
-    void Rebuild()
+    void zoom()
     {
-        for (auto chan:mChannels) {chan->Wave()->Rebuild();}
-        waveResizeSlot();
-        guiMeasureResizeSlot();
+        setScrollTime(mFocusTime - mSetup.Scaling().XPixelAsMicroSecond(mFocusXpx));
+        slotWaveResized();
+        rebuild();
     }
+
 private:
-    GuiMeasure * NewMeasure(QWidget * parent)
+    MicroSecond scrollTime() const
+    {
+        return mScrollTime;
+    }
+
+    void setScrollTime(MicroSecond time)
+    {
+        mScrollTime = time;
+        for (auto chan:mChannels) {chan->Wave()->setScrollTime(time);}
+    }
+
+    void rebuild()
+    {
+        double scroll = static_cast<double>(scrollTime() / 1000000.0);
+        double focus = static_cast<double>(mFocusTime / 1000000.0);
+        qDebug() << "rebuild: scroll" << scroll << "focus" << focus << "fpx" << mFocusXpx;
+        for (auto chan:mChannels) {chan->Wave()->rebuild();}
+    }
+
+    void setFocus(const char * tag)
+    {
+        if (!mMeasure) return;
+        mFocusXpx = mMeasure->geometry().center().x();
+        mFocusTime = scrollTime() + mSetup.Scaling().XPixelAsMicroSecond(mFocusXpx);
+        double scroll = static_cast<double>(scrollTime() / 1000000.0);
+        double focus = static_cast<double>(mFocusTime / 1000000.0);
+        qDebug() << tag << "setFocus: scroll" << scroll << "focus" << focus << "fpx" << mFocusXpx;
+    }
+
+    GuiMeasure * createMeasure(QWidget * parent)
     {
         int w;
         int h;
@@ -1065,7 +1123,8 @@ private:
         gui->resize(w, h);
         gui->setMinimumSize(25, 25);
         gui->show();
-        connect(gui, SIGNAL(resizeSignal()), this, SLOT(guiMeasureResizeSlot()));
+        connect(gui, SIGNAL(signalResized()), this, SLOT(slotGuiMeasureResized()));
+        connect(gui, SIGNAL(signalMoved()), this, SLOT(slotGuiMeasureMoved()));
         return gui;
     }
 };
@@ -1078,18 +1137,18 @@ private:
     DataMain * mData;
     GuiMain * mGui;
 
-    void Rebuild() {if (mGui) {mGui->Rebuild();}}
+    void zoom() {if (mGui) {mGui->zoom();}}
 private slots:
     void Open()     {Open(QFileDialog::getOpenFileName(this, QString("Open"), QDir::currentPath()));}
     void Reload()   {Open(mSetup.fileName);}
     void Exit()     {close();}
-    void Unzoom()   {mSetup.xzoom = 0; mSetup.yzoom = 0; Rebuild();}
-    void ZoomIn()   {mSetup.xzoom++; mSetup.yzoom++; Rebuild();}
-    void ZoomOut()  {mSetup.xzoom--; mSetup.yzoom--; Rebuild();}
-    void XZoomIn()  {mSetup.xzoom++; Rebuild();}
-    void XZoomOut() {mSetup.xzoom--; Rebuild();}
-    void YZoomIn()  {mSetup.yzoom++; Rebuild();}
-    void YZoomOut() {mSetup.yzoom--; Rebuild();}
+    void Unzoom()   {mSetup.xzoom = 0; mSetup.yzoom = 0; zoom();}
+    void ZoomIn()   {mSetup.xzoom++; mSetup.yzoom++; zoom();}
+    void ZoomOut()  {mSetup.xzoom--; mSetup.yzoom--; zoom();}
+    void XZoomIn()  {mSetup.xzoom++; zoom();}
+    void XZoomOut() {mSetup.xzoom--; zoom();}
+    void YZoomIn()  {mSetup.yzoom++; zoom();}
+    void YZoomOut() {mSetup.yzoom--; zoom();}
 public:
     MainWindow():
         mSetup(),
