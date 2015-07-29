@@ -1,6 +1,6 @@
 TARGET = no
 TEMPLATE = app
-#CONFIG += debug
+CONFIG += debug
 #DEFINES += MEASURE_PERFORMANCE
 CONFIG += c++11
 QT += widgets

@@ -549,29 +549,301 @@ PixelScaling::PixelScaling(int xzoom, int yzoom):
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// DrawChannel
+// UnitScale
 ////////////////////////////////////////////////////////////////////////////////
 
+class UnitScale
+{
+private:
+    const double mMillimeterPerUnit;
+    double mPixelPerMillimeter;
+    double mMinData;
+    double mMaxData;
+    double mMin;
+    double mFocus;
+    double mGain;
+    int mPixelSize;
+    int mZoom;
+public:
+    explicit UnitScale(double speed):
+        mMillimeterPerUnit(speed),
+        mPixelPerMillimeter(0),
+        mMinData(0),
+        mMaxData(0),
+        mMin(0),
+        mFocus(0),
+        mGain(0),
+        mPixelSize(0),
+        mZoom(0)
+    {
+    }
 
+    void setGain(double gain)
+    {
+        mGain = gain;
+    }
+
+    void setYResolution()
+    {
+        const QDesktopWidget desk;
+        setPixelPerMillimeter(desk.height(), desk.heightMM());
+    }
+
+    void setXResolution()
+    {
+        const QDesktopWidget desk;
+        setPixelPerMillimeter(desk.width(), desk.widthMM());
+    }
+
+    void setPixelPerMillimeter(double px, double mm)
+    {
+        mPixelPerMillimeter = px / mm;
+    }
+
+    void setPixel(int px)
+    {
+        mPixelSize = px;
+        update();
+    }
+
+    void setFocus(double unit)
+    {
+        mFocus = unit;
+    }
+
+    void setFocusPixel(int px)
+    {
+        setFocus(FromPixel(px));
+    }
+
+    void setFocusPixelInverted(int px)
+    {
+        setFocus(FromInvertedPixel(px));
+    }
+
+    double pixelPerUnit() const
+    {
+        return mPixelPerMillimeter * mmPerUnit();
+    }
+
+    int ToPixel(double unit) const
+    {
+        double result = (unit - min()) * mmPerUnit() * mPixelPerMillimeter;
+        result += (result > 0) ? 0.5 : -0.5;
+        return static_cast<int>(result);
+    }
+
+    int LsbToPixel(int lsb) const
+    {
+        return ToInvertedPixel(mGain * lsb);
+    }
+
+    int ToInvertedPixel(double unit) const
+    {
+        return pixelSize() - ToPixel(unit);
+    }
+
+    MicroSecond UsFromPixel(int px) const
+    {
+        return static_cast<MicroSecond>(1000000.0 * FromPixel(px));
+    }
+
+    double FromPixel(int px) const
+    {
+        return min() + ((px / mPixelPerMillimeter) / mmPerUnit());
+    }
+
+    double FromInvertedPixel(int inverted) const
+    {
+        return FromPixel(pixelSize() - inverted);
+    }
+
+    void setData(double minData, double maxData)
+    {
+        mMinData = minData;
+        mMaxData = maxData;
+        update();
+    }
+
+    void update()
+    {
+        const double range = mMaxData - mMinData;
+        const double offset = (mMaxData + mMinData) / 2;
+        mZoom = 0;
+        while (range > unitSize()) {zoomOut();}
+        mMin = offset - unitSize() / 2;
+        mFocus = (min() + max()) / 2;
+    }
+
+    void zoomIn()
+    {
+        ++mZoom;
+        mMin += (mFocus - min()) / 2;
+    }
+
+    void zoomOut()
+    {
+        --mZoom;
+        mMin -= (mFocus - min());
+    }
+
+    void scrollLeft()
+    {
+        scroll(unitSize() / 4);
+    }
+
+    void scrollRight()
+    {
+        scroll(-unitSize() / 4);
+    }
+
+    void scroll(double unit)
+    {
+        mMin += unit;
+        mFocus += unit;
+    }
+
+    int pixelSize() const
+    {
+        return mPixelSize;
+    }
+
+    double mmSize() const
+    {
+        return static_cast<double>(pixelSize()) / mPixelPerMillimeter;
+    }
+
+    double unitSize() const
+    {
+        return mmSize() / mmPerUnit();
+    }
+
+    double mmPerUnit() const
+    {
+        return mMillimeterPerUnit * zoomFactor();
+    }
+
+    double zoomFactor() const
+    {
+        return ((mZoom < 0) ? (1.0 / (1 << (-mZoom))) : (1 << mZoom));
+    }
+
+    double min() const {return mMin;}
+    double max() const {return min() + unitSize();}
+};
+
+inline bool IsEqual(double a, double b)
+{
+    if (std::fabs(a - b) < 0.001) return true;
+    qDebug() << a << b;
+    return false;
+}
+
+TEST(UnitScale, UnitIsSecond)
+{
+    UnitScale scale(25);
+    scale.setPixelPerMillimeter(40, 10);
+    scale.setPixel(420);
+    scale.setData(0, 4);
+    EXPECT_TRUE(IsEqual(105.0, scale.mmSize()));
+    EXPECT_TRUE(IsEqual(  1.0, scale.zoomFactor()));
+    EXPECT_TRUE(IsEqual( 25.0, scale.mmPerUnit()));
+    EXPECT_TRUE(IsEqual(  4.2, scale.unitSize()));
+    EXPECT_TRUE(IsEqual( -0.1, scale.min()));
+    EXPECT_TRUE(IsEqual(  4.1, scale.max()));
+    EXPECT_TRUE(IsEqual( -0.1, scale.FromPixel(0)));
+    EXPECT_TRUE(IsEqual(  2.0, scale.FromPixel(210)));
+    EXPECT_TRUE(IsEqual(  4.1, scale.FromPixel(420)));
+    EXPECT_TRUE(IsEqual(100.0, scale.pixelPerUnit()));
+    EXPECT_EQ(  0, scale.ToPixel(-0.1));
+    EXPECT_EQ(210, scale.ToPixel(2.0));
+    EXPECT_EQ(420, scale.ToPixel(4.1));
+
+    scale.setData(0, 5);
+    EXPECT_TRUE(IsEqual( 0.5, scale.zoomFactor()));
+    EXPECT_TRUE(IsEqual(12.5, scale.mmPerUnit()));
+    EXPECT_TRUE(IsEqual( 8.4, scale.unitSize()));
+    EXPECT_TRUE(IsEqual(-1.7, scale.min()));
+    EXPECT_TRUE(IsEqual( 6.7, scale.max()));
+
+    scale.scroll(1.7);
+    EXPECT_TRUE(IsEqual(0.0, scale.min()));
+    EXPECT_TRUE(IsEqual(8.4, scale.max()));
+
+    scale.setFocus(2.1);
+    scale.zoomOut();
+    EXPECT_TRUE(IsEqual(-2.1, scale.min()));
+    EXPECT_TRUE(IsEqual(14.7, scale.max()));
+
+    scale.zoomIn();
+    EXPECT_TRUE(IsEqual(0.0, scale.min()));
+    EXPECT_TRUE(IsEqual(8.4, scale.max()));
+
+    scale.zoomIn();
+    EXPECT_TRUE(IsEqual(1.05, scale.min()));
+    EXPECT_TRUE(IsEqual(5.25, scale.max()));
+}
+
+TEST(UnitScale, UnitIsMilliVolt)
+{
+    UnitScale scale(10);
+    scale.setPixelPerMillimeter(5, 1);
+    scale.setPixel(500);
+    scale.setData(-1, 1);
+    EXPECT_TRUE(IsEqual(100, scale.mmSize()));
+    EXPECT_TRUE(IsEqual(10, scale.unitSize()));
+    EXPECT_TRUE(IsEqual(1, scale.zoomFactor()));
+    EXPECT_TRUE(IsEqual(5, scale.max()));
+    EXPECT_TRUE(IsEqual(-5, scale.min()));
+    
+    scale.setData(-1, 3);
+    EXPECT_TRUE(IsEqual(10, scale.unitSize()));
+    EXPECT_TRUE(IsEqual(1, scale.zoomFactor()));
+    EXPECT_TRUE(IsEqual(6, scale.max()));
+    EXPECT_TRUE(IsEqual(-4, scale.min()));
+    
+    scale.setData(-6, 12);
+    EXPECT_TRUE(IsEqual(20, scale.unitSize()));
+    EXPECT_TRUE(IsEqual(0.5, scale.zoomFactor()));
+    EXPECT_TRUE(IsEqual(13, scale.max()));
+    EXPECT_TRUE(IsEqual(-7, scale.min()));
+
+    EXPECT_EQ(500, scale.ToPixel(13));
+    EXPECT_EQ(250, scale.ToPixel(3.0));
+    EXPECT_EQ(  0, scale.ToPixel(-7));
+    
+    EXPECT_EQ(  0, scale.ToInvertedPixel(13));
+    EXPECT_EQ(250, scale.ToInvertedPixel(3.0));
+    EXPECT_EQ(500, scale.ToInvertedPixel(-7));
+    
+    EXPECT_TRUE(IsEqual(13, scale.FromInvertedPixel(0)));
+    EXPECT_TRUE(IsEqual( 3, scale.FromInvertedPixel(250)));
+    EXPECT_TRUE(IsEqual(-7, scale.FromInvertedPixel(500)));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// DrawChannel
+////////////////////////////////////////////////////////////////////////////////
 
 class DrawChannel
 {
 public:
-    explicit DrawChannel(const DataChannel & data, const PixelScaling & scale,
-            MicroSecond scrollTime);
+    explicit DrawChannel(const DataChannel & data,
+            const UnitScale & timeScale,
+            const UnitScale & valueScale);
     void Draw(QWidget & parent, const QRect & rect);
 private:
     void DrawSamples(QPainter & painter, const QRect & rect);
     void DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data);
     void DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data);
 
+    const DataChannel & mData;
+    const UnitScale & mTimeScale;
+    UnitScale mValueScale;
     MeasurePerformance mMeasurePerformance;
     double mSamplesPerPixel;
     const QPen mPointPen;
     QPen mLinePen;
-    PixelScaling mScale;
-    const DataChannel & mData;
-    const MicroSecond mScrollTime;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -650,15 +922,16 @@ private:
 // class DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
 
-DrawChannel::DrawChannel(const DataChannel & data, const PixelScaling & scale,
-        MicroSecond scrollTime):
+DrawChannel::DrawChannel(const DataChannel & data,
+        const UnitScale & timeScale,
+        const UnitScale & valueScale):
+    mData(data),
+    mTimeScale(timeScale),
+    mValueScale(valueScale),
     mMeasurePerformance("DrawChannel"),
     mSamplesPerPixel(0),
     mPointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
-    mLinePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
-    mScale(scale),
-    mData(data),
-    mScrollTime(scrollTime)
+    mLinePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)
 {
 }
 
@@ -668,17 +941,28 @@ void DrawChannel::Draw(QWidget & parent, const QRect & rect)
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(mLinePen);
 
+    qDebug() << rect.left() << rect.right();
+
     DrawSamples(painter, rect);
+}
+
+inline static MicroSecond SecondToMicroSecond(double seconds)
+{
+    return static_cast<MicroSecond>(seconds * 1000000.0);
+}
+
+inline static double MicroSecondToSecond(MicroSecond us)
+{
+    return static_cast<double>(us) / 1000000.0;
 }
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
-    const double pixelPeriod = mScale.XPixelAsMicroSecond(1);
-
     for (auto & data:mData.Files())
     {
-        mScale.SetLsbGain(data.SampleGain());
-        mSamplesPerPixel = pixelPeriod / data.SamplePeriod();
+        mValueScale.setGain(data.SampleGain());
+        mSamplesPerPixel = 1.0 /
+            (mTimeScale.pixelPerUnit() * MicroSecondToSecond(data.SamplePeriod()));
 
         if (mSamplesPerPixel > 5)
         {
@@ -694,26 +978,27 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
     const MicroSecond samplePeriod = data.SamplePeriod();
-    const MicroSecond timeOffset = mScrollTime - data.SignalDelay();
     const int indexEnd = data.Values().size() - 1;
     const int xpxEnd = rect.right() + 2;
-
+        
+    painter.drawLine(0 , 0, rect.width(), rect.height());
+        
     for (int xpx = rect.left(); xpx < xpxEnd; ++xpx)
     {
-        const MicroSecond timeFirst = mScale.XPixelAsMicroSecond(xpx);
-        const int indexFirst = (timeFirst + timeOffset) / samplePeriod;
+        const MicroSecond timeFirst = mTimeScale.UsFromPixel(xpx);
+        const int indexFirst = timeFirst / samplePeriod;
         if (indexFirst < 1) continue;
 
-        const MicroSecond timeLast = mScale.XPixelAsMicroSecond(xpx + 1);
-        const int indexLast = (timeLast + timeOffset) / samplePeriod;
+        const MicroSecond timeLast = mTimeScale.UsFromPixel(xpx + 1);
+        const int indexLast = timeLast / samplePeriod;
         if (indexLast > indexEnd) return;
 
         // 1st line per xpx:
         // - from last sample in previous xpx
         // - to first sample in current xpx
         auto itFirst = data.Values().begin() + indexFirst;
-        auto first = mScale.LsbAsYPixel(*itFirst);
-        auto last = mScale.LsbAsYPixel(*(itFirst - 1));
+        auto first = mValueScale.LsbToPixel(*itFirst);
+        auto last = mValueScale.LsbToPixel(*(itFirst - 1));
         painter.drawLine(xpx - 1, last, xpx, first);
 
         // 2nd line per xpx:
@@ -721,8 +1006,8 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
         // - to max sample in current xpx
         auto itLast = itFirst + (indexLast - indexFirst);
         auto minmax = std::minmax_element(itFirst, itLast);
-        auto min = mScale.LsbAsYPixel(*minmax.first);
-        auto max = mScale.LsbAsYPixel(*minmax.second);
+        auto min = mValueScale.LsbToPixel(*minmax.first);
+        auto max = mValueScale.LsbToPixel(*minmax.second);
         painter.drawLine(xpx, min, xpx, max);
     }
 }
@@ -730,11 +1015,10 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
 void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
     const MicroSecond samplePeriod = data.SamplePeriod();
-    const MicroSecond timeOffset = mScrollTime - data.SignalDelay();
-    const MicroSecond timeFirst = mScale.XPixelAsMicroSecond(rect.left());
-    const MicroSecond timeLast = mScale.XPixelAsMicroSecond(rect.right() + 2);
-    const int indexFirst = (timeFirst + timeOffset) / samplePeriod;
-    const int indexLast = (timeLast + timeOffset) / samplePeriod + 2;
+    const MicroSecond timeFirst = mTimeScale.UsFromPixel(rect.left());
+    const MicroSecond timeLast = mTimeScale.UsFromPixel(rect.right() + 2);
+    const int indexFirst = timeFirst / samplePeriod;
+    const int indexLast = timeLast / samplePeriod + 2;
     const int indexBegin = (indexFirst < 0) ? 0 : indexFirst;
     const int indexMax = data.Values().size();
     const int indexEnd = (indexLast > indexMax) ? indexMax : indexLast;
@@ -743,9 +1027,9 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
     const bool drawPoints = mSamplesPerPixel < 0.5;
     auto now  = data.Values().begin() + indexBegin;
     auto end  = data.Values().begin() + indexEnd;
-    auto yold = mScale.LsbAsYPixel(*now);
-    auto time = indexBegin * samplePeriod - timeOffset;
-    auto xold = mScale.MicroSecondAsXPixel(time);
+    auto yold = mValueScale.LsbToPixel(*now);
+    auto time = indexBegin * samplePeriod;
+    auto xold = mTimeScale.ToPixel(MicroSecondToSecond(time));
     ++now;
     time += samplePeriod;
 
@@ -759,8 +1043,8 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
 
     while (now < end)
     {
-        auto ynow = mScale.LsbAsYPixel(*now);
-        auto xnow = mScale.MicroSecondAsXPixel(time);
+        auto ynow = mValueScale.LsbToPixel(*now);
+        auto xnow = mTimeScale.ToPixel(MicroSecondToSecond(time));
         ++now;
         time += samplePeriod;
         painter.drawLine(xold, yold, xnow, ynow);
@@ -861,92 +1145,71 @@ void ArgumentParser::PrintUsage()
 struct GuiSetup
 {
     QString fileName;
-    int xzoom;
-    int yzoom;
-
-    GuiSetup():
-        fileName(),
-        xzoom(0),
-        yzoom(0)
-    {
-    }
-
-    PixelScaling Scaling() const
-    {
-        return PixelScaling(xzoom, yzoom);
-    }
 };
 
 class GuiWave : public QWidget
 {
     Q_OBJECT
 public:
-    explicit GuiWave(QWidget * parent, const DataChannel & data, const GuiSetup & setup):
+    explicit GuiWave(QWidget * parent, const DataChannel & data, double seconds):
         QWidget(parent),
         mData(data),
-        mSetup(setup),
-        mScrollTime(0)
+        mTimeScale(25.0),
+        mValueScale(10.0)
     {
-        rebuild();
+        mTimeScale.setXResolution();
+        mTimeScale.setPixel(width());
+        mTimeScale.setData(0, seconds);
+        
+        mValueScale.setYResolution();
+        mValueScale.setPixel(height());
+        mValueScale.setData(data.Min(), data.Max());
     }
-
-    void setScrollTime(MicroSecond scrollTime)
-    {
-        mScrollTime = scrollTime;
-    }
-
-    void rebuild()
-    {
-        const PixelScaling scale = mSetup.Scaling();
-        setMinimumHeight(scale.MilliVoltAsYPixel(mData.Max() - mData.Min()));
-        update();
-    }
-
-    MicroSecond ScrollTime() const
-    {
-        return mScrollTime;
-    }
+    void moreX() {mTimeScale.zoomIn(); update();}
+    void lessX() {mTimeScale.zoomOut(); update();}
+    void moreY() {mValueScale.zoomIn(); update();}
+    void lessY() {mValueScale.zoomOut(); update();}
 signals:
-    void signalResized();
     void signalClicked(GuiWave *, QMouseEvent *);
 private:
     const DataChannel & mData;
-    const GuiSetup & mSetup;
-    MicroSecond mScrollTime;
+    UnitScale mTimeScale;
+    UnitScale mValueScale;
 
     void paintEvent(QPaintEvent * e) override
     {
-        PixelScaling scale = mSetup.Scaling();
-        const int viewOffset = height() / 2;
-        const int dataOffset = scale.MilliVoltAsYPixel(mData.Max() + mData.Min()) / 2;
-        scale.SetLsbOffset(viewOffset + dataOffset);
-        DrawChannel draw(mData, scale, mScrollTime);
+        DrawChannel draw(mData, mTimeScale, mValueScale);
         draw.Draw(*this, e->rect());
     }
 
     void mousePressEvent(QMouseEvent * evt) override
     {
+        mTimeScale.setFocusPixel(evt->pos().x());
+        mValueScale.setFocusPixelInverted(evt->pos().y());
         emit signalClicked(this, evt);
     }
 
     void resizeEvent(QResizeEvent *) override
     {
-        emit signalResized();
+        mValueScale.setPixel(height());
+        mTimeScale.setPixel(width());
+        update();
+        qDebug() << "resizeEvent" << width() << height();
     }
 };
 
-class GuiChannel : public QScrollArea
+class GuiChannel : public QWidget
 {
 private:
     GuiWave * mWave;
 public:
-    GuiChannel(QWidget * parent, const DataChannel & data, const GuiSetup & setup):
-        QScrollArea(parent),
-        mWave(new GuiWave(this, data, setup))
+    GuiChannel(QWidget * parent, const DataChannel & data, double seconds):
+        QWidget(parent),
+        mWave(new GuiWave(this, data, seconds))
     {
-        setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-        setWidgetResizable(true);
-        setWidget(mWave);
+        QVBoxLayout * layout = new QVBoxLayout(this);
+        layout->addWidget(mWave);
+        setLayout(layout);
     }
 
     GuiWave * Wave()
@@ -961,61 +1224,10 @@ class GuiMain : public QWidget
 private:
     const GuiSetup & mSetup;    
     const DataMain & mData;
-    QScrollBar * mScroll;
     GuiMeasure * mMeasure;
     GuiWave * mMeasuredWave;
-    int mFocusXpx;
-    MicroSecond mFocusTime;
-    MicroSecond mScrollTime;
     std::vector<GuiChannel *> mChannels;
 private slots:
-    void slotScrolled(int)
-    {
-        double value = mData.Duration();
-        value *= mScroll->value();
-        value /= (mScroll->maximum() + mScroll->pageStep());
-        setScrollTime(static_cast<MicroSecond>(value));
-        setFocus("slotScrolled");
-        rebuild();
-    }
-
-    void slotWaveResized()
-    {
-        if (mChannels.size() < 1) return;
-        const PixelScaling scale = mSetup.Scaling();
-        int page = mChannels[0]->Wave()->width();
-        if (page < 4) {page = 4;}
-        int end = scale.MicroSecondAsXPixel(mData.Duration());
-        if (end < 4) {end = 4;}
-        int max = end - page;
-        if (max < 0) {max = 0;}
-        const int min = 0;
-        int value = scale.MicroSecondAsXPixel(scrollTime());
-        if (value < min) {value = min;}
-        if (value > max) {value = max;}
-        mScroll->setMinimum(min);
-        mScroll->setMaximum(max);
-        mScroll->setValue(value);
-        mScroll->setPageStep(page);
-        mScroll->setSingleStep(page / 4);
-        rebuild();
-    }
-
-    void slotGuiMeasureMoved()
-    {
-        setFocus("slotGuiMeasureMoved");
-    }
-
-    void slotGuiMeasureResized()
-    {
-        const PixelScaling scale = mSetup.Scaling();
-        const MilliSecond ms = scale.XPixelAsMilliSecond(mMeasure->width());
-        const MilliVolt mv = scale.YPixelAsMilliVolt(mMeasure->height());
-        QString txt = QString("%1ms, %2mV").arg(ms).arg(mv);
-        qDebug() << txt;
-        setFocus("slotGuiMeasureResized");
-    }
-
     void slotWaveClicked(GuiWave * sender, QMouseEvent * event)
     {
         if (mMeasuredWave != sender)
@@ -1027,77 +1239,39 @@ private slots:
         QRect frame = mMeasure->rect();
         frame.moveCenter(event->pos());
         mMeasure->move(frame.topLeft());
-        setFocus("slotWaveClicked");
     }
 public:
     GuiMain(QWidget * parent, const GuiSetup & setup, const DataMain & data):
         QWidget(parent),
         mSetup(setup),
         mData(data),
-        mScroll(new QScrollBar(Qt::Horizontal, this)),
         mMeasure(nullptr),
         mMeasuredWave(nullptr),
-        mFocusXpx(0),
-        mFocusTime(0),
-        mScrollTime(0),
         mChannels()
     {
         QVBoxLayout * layout = new QVBoxLayout(this);
-        bool isResizeConnected = false;
         for (auto & chan:mData.Channels())
         {
-            GuiChannel * gui = new GuiChannel(this, chan, mSetup);
+            GuiChannel * gui = new GuiChannel(this, chan, MicroSecondToSecond(data.Duration()));
             layout->addWidget(gui);
             mChannels.push_back(gui);
             connect(gui->Wave(), SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
                     this, SLOT(slotWaveClicked(GuiWave *, QMouseEvent *)));
-
-            if (!isResizeConnected)
-            {
-                isResizeConnected = true;
-                connect(gui->Wave(), SIGNAL(signalResized()), this, SLOT(slotWaveResized()));
-            }
         }
-        layout->addWidget(mScroll);
         setLayout(layout);
-        connect(mScroll, SIGNAL(valueChanged(int)), this, SLOT(slotScrolled(int)));
-    }
-    
-    void zoom()
-    {
-        setScrollTime(mFocusTime - mSetup.Scaling().XPixelAsMicroSecond(mFocusXpx));
-        slotWaveResized();
-        rebuild();
     }
 
+    void moreX() {for (auto & chan:mChannels) {chan->Wave()->moreX();}}
+    void moreY() {for (auto & chan:mChannels) {chan->Wave()->moreY();}}
+    void lessX() {for (auto & chan:mChannels) {chan->Wave()->lessX();}}
+    void lessY() {for (auto & chan:mChannels) {chan->Wave()->lessY();}}
 private:
-    MicroSecond scrollTime() const
+    void paintEvent(QPaintEvent *) override
     {
-        return mScrollTime;
-    }
-
-    void setScrollTime(MicroSecond time)
-    {
-        mScrollTime = time;
-        for (auto chan:mChannels) {chan->Wave()->setScrollTime(time);}
-    }
-
-    void rebuild()
-    {
-        double scroll = static_cast<double>(scrollTime() / 1000000.0);
-        double focus = static_cast<double>(mFocusTime / 1000000.0);
-        qDebug() << "rebuild: scroll" << scroll << "focus" << focus << "fpx" << mFocusXpx;
-        for (auto chan:mChannels) {chan->Wave()->rebuild();}
-    }
-
-    void setFocus(const char * tag)
-    {
-        if (!mMeasure) return;
-        mFocusXpx = mMeasure->geometry().center().x();
-        mFocusTime = scrollTime() + mSetup.Scaling().XPixelAsMicroSecond(mFocusXpx);
-        double scroll = static_cast<double>(scrollTime() / 1000000.0);
-        double focus = static_cast<double>(mFocusTime / 1000000.0);
-        qDebug() << tag << "setFocus: scroll" << scroll << "focus" << focus << "fpx" << mFocusXpx;
+        QPen pen(Qt::blue, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        QPainter painter(this);
+        painter.setPen(pen);
+        painter.drawLine(0, 0, width(), height());
     }
 
     GuiMeasure * createMeasure(QWidget * parent)
@@ -1114,9 +1288,8 @@ private:
         }
         else
         {
-            const PixelScaling scale = mSetup.Scaling();
-            w = scale.MilliMeterAsXPixel(25);
-            h = scale.MilliMeterAsYPixel(10);
+            w = 20;
+            h = 20;
         }
 
         GuiMeasure * gui = new GuiMeasure(parent);
@@ -1136,19 +1309,17 @@ private:
     GuiSetup mSetup;
     DataMain * mData;
     GuiMain * mGui;
-
-    void zoom() {if (mGui) {mGui->zoom();}}
 private slots:
     void Open()     {Open(QFileDialog::getOpenFileName(this, QString("Open"), QDir::currentPath()));}
     void Reload()   {Open(mSetup.fileName);}
     void Exit()     {close();}
-    void Unzoom()   {mSetup.xzoom = 0; mSetup.yzoom = 0; zoom();}
-    void ZoomIn()   {mSetup.xzoom++; mSetup.yzoom++; zoom();}
-    void ZoomOut()  {mSetup.xzoom--; mSetup.yzoom--; zoom();}
-    void XZoomIn()  {mSetup.xzoom++; zoom();}
-    void XZoomOut() {mSetup.xzoom--; zoom();}
-    void YZoomIn()  {mSetup.yzoom++; zoom();}
-    void YZoomOut() {mSetup.yzoom--; zoom();}
+    void Unzoom()   {}
+    void more()     {}
+    void less()     {}
+    void moreX()    {if (mGui) {mGui->moreX();}}
+    void lessX()    {if (mGui) {mGui->lessX();}}
+    void moreY()    {if (mGui) {mGui->moreY();}}
+    void lessY()    {if (mGui) {mGui->lessY();}}
 public:
     MainWindow():
         mSetup(),
@@ -1173,12 +1344,12 @@ public:
 
         QMenu * viewMenu = menuBar()->addMenu(tr("&View"));
         ACTION(viewMenu, "&Unzoom", Unzoom, Qt::Key_U);
-        ACTION(viewMenu, "Zoom-&In", ZoomIn, Qt::Key_Plus + Qt::KeypadModifier);
-        ACTION(viewMenu, "Zoom-&Out", ZoomOut, Qt::Key_Minus + Qt::KeypadModifier);
-        ACTION(viewMenu, "X-Zoom-In", XZoomIn, Qt::Key_X);
-        ACTION(viewMenu, "X-Zoom-Out", XZoomOut, Qt::Key_X + Qt::SHIFT);
-        ACTION(viewMenu, "Y-Zoom-In", YZoomIn, Qt::Key_Y);
-        ACTION(viewMenu, "Y-Zoom-Out", YZoomOut, Qt::Key_Y + Qt::SHIFT);
+        ACTION(viewMenu, "Zoom-&In", more, Qt::Key_Plus + Qt::KeypadModifier);
+        ACTION(viewMenu, "Zoom-&Out", less, Qt::Key_Minus + Qt::KeypadModifier);
+        ACTION(viewMenu, "X-Zoom-In", moreX, Qt::Key_X);
+        ACTION(viewMenu, "X-Zoom-Out", lessX, Qt::Key_X + Qt::SHIFT);
+        ACTION(viewMenu, "Y-Zoom-In", moreY, Qt::Key_Y);
+        ACTION(viewMenu, "Y-Zoom-Out", lessY, Qt::Key_Y + Qt::SHIFT);
 #undef ACTION
     }
 
@@ -1196,7 +1367,6 @@ public:
         mData = nullptr;
         mSetup.fileName = name;
         mData = new DataMain(name);
-        Unzoom();
 
         if (mData->IsValid())
         {
