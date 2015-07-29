@@ -906,7 +906,6 @@ public:
         layout->addWidget(grip, 0, Qt::AlignRight | Qt::AlignBottom);
     }
 signals:
-    void signalResized();
     void signalMoved();
 private:
     void mousePressEvent(QMouseEvent *evt) override
@@ -928,7 +927,7 @@ private:
 
     void resizeEvent(QResizeEvent *) override
     {
-        emit signalResized();
+        emit signalMoved();
     }
 
     QPoint mLastPos;
@@ -1183,6 +1182,12 @@ public:
         mValueScale.setPixel(height());
         mValueScale.setData(data.Min(), data.Max());
     }
+
+    void setTimeFocus(int xpx)
+    {
+        mTimeScale.setFocusPixel(xpx);
+    }
+
     void moreX() {mTimeScale.zoomIn(); update();}
     void lessX() {mTimeScale.zoomOut(); update();}
     void moreY() {mValueScale.zoomIn(); update();}
@@ -1206,7 +1211,6 @@ private:
 
     void mousePressEvent(QMouseEvent * evt) override
     {
-        mTimeScale.setFocusPixel(evt->pos().x());
         const Translate t(mTimeScale, mValueScale);
         mValueScale.setFocus(t.YPixelToUnit(evt->pos().y()));
         emit signalClicked(this, evt);
@@ -1261,6 +1265,13 @@ private slots:
         QRect frame = mMeasure->rect();
         frame.moveCenter(event->pos());
         mMeasure->move(frame.topLeft());
+        slotMeasureMoved();
+    }
+
+    void slotMeasureMoved()
+    {
+        const int xpx = mMeasure->geometry().center().x();
+        for (auto & chan:mChannels) {chan->Wave()->setTimeFocus(xpx);}
     }
 public:
     GuiMain(QWidget * parent, const GuiSetup & setup, const DataMain & data):
@@ -1314,6 +1325,7 @@ private:
         gui->resize(w, h);
         gui->setMinimumSize(25, 25);
         gui->show();
+        connect(gui, SIGNAL(signalMoved()), this, SLOT(slotMeasureMoved()));
         return gui;
     }
 };
