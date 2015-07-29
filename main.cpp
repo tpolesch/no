@@ -707,12 +707,23 @@ private:
     const UnitScale & mX;
     const UnitScale & mY;
     double mGain;
+    MicroSecond mDelay;
+    MicroSecond mSamplePeriod;
 public:
     explicit Translate(const UnitScale & x, const UnitScale & y):
         mX(x),
         mY(y),
-        mGain(0)
+        mGain(0),
+        mDelay(0),
+        mSamplePeriod(0)
     {
+    }
+
+    void setFile(const DataFile & data)
+    {
+        mGain = data.SampleGain();
+        mDelay = data.SignalDelay();
+        mSamplePeriod = data.SamplePeriod();
     }
 
     void setGain(double gain)
@@ -720,15 +731,20 @@ public:
         mGain = gain;
     }
 
-    double samplesPerPixel(MicroSecond samplePeriod) const
+    double samplesPerPixel() const
     {
-        const double sps = 1000000.0 / samplePeriod;
+        const double sps = 1000000.0 / mSamplePeriod;
         return sps / mX.pixelPerUnit();
     }
-
+private:
     MicroSecond XPixelToMicroSecond(int xpx) const
     {
         return static_cast<MicroSecond>(1000000.0 * mX.FromPixel(xpx));
+    }
+public:
+    int XPixelToSampleIndex(int xpx) const
+    {
+        return (XPixelToMicroSecond(xpx) - mDelay) / mSamplePeriod;
     }
 
     int MicroSecondToXPixel(MicroSecond us) const
@@ -968,36 +984,33 @@ void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
-    for (auto & data:mData.Files())
+    for (auto & file:mData.Files())
     {
-        mTranslate.setGain(data.SampleGain());
-        mSamplesPerPixel = mTranslate.samplesPerPixel(data.SamplePeriod());
+        mTranslate.setFile(file);
+        mSamplesPerPixel = mTranslate.samplesPerPixel();
 
         if (mSamplesPerPixel > 5)
         {
-            DrawPixelWise(painter, rect, data);
+            DrawPixelWise(painter, rect, file);
         }
         else
         {
-            DrawSampleWise(painter, rect, data);
+            DrawSampleWise(painter, rect, file);
         }
     }
 }
 
 void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
-    const MicroSecond samplePeriod = data.SamplePeriod();
     const int indexEnd = data.Values().size() - 1;
     const int xpxEnd = rect.right() + 2;
         
     for (int xpx = rect.left(); xpx < xpxEnd; ++xpx)
     {
-        const MicroSecond timeFirst = mTranslate.XPixelToMicroSecond(xpx);
-        const int indexFirst = timeFirst / samplePeriod;
+        const int indexFirst = mTranslate.XPixelToSampleIndex(xpx);
         if (indexFirst < 1) continue;
 
-        const MicroSecond timeLast = mTranslate.XPixelToMicroSecond(xpx + 1);
-        const int indexLast = timeLast / samplePeriod;
+        const int indexLast = mTranslate.XPixelToSampleIndex(xpx + 1);
         if (indexLast > indexEnd) return;
 
         // 1st line per xpx:
@@ -1022,10 +1035,8 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
 void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
     const MicroSecond samplePeriod = data.SamplePeriod();
-    const MicroSecond timeFirst = mTranslate.XPixelToMicroSecond(rect.left());
-    const MicroSecond timeLast = mTranslate.XPixelToMicroSecond(rect.right() + 2);
-    const int indexFirst = timeFirst / samplePeriod;
-    const int indexLast = timeLast / samplePeriod + 2;
+    const int indexFirst = mTranslate.XPixelToSampleIndex(rect.left());
+    const int indexLast = mTranslate.XPixelToSampleIndex(rect.right() + 2);
     const int indexBegin = (indexFirst < 0) ? 0 : indexFirst;
     const int indexMax = data.Values().size();
     const int indexEnd = (indexLast > indexMax) ? indexMax : indexLast;
