@@ -434,6 +434,7 @@ public:
     
     bool IsValid() const {return mIsValid;}
     MicroSecond Duration() const {return mDuration;}
+    double Seconds() const {return static_cast<double>(Duration()) / 1000000.0;}
 
     const std::vector<DataChannel> & Channels() const
     {
@@ -561,7 +562,6 @@ private:
     double mMaxData;
     double mMin;
     double mFocus;
-    double mGain;
     int mPixelSize;
     int mZoom;
 public:
@@ -572,15 +572,9 @@ public:
         mMaxData(0),
         mMin(0),
         mFocus(0),
-        mGain(0),
         mPixelSize(0),
         mZoom(0)
     {
-    }
-
-    void setGain(double gain)
-    {
-        mGain = gain;
     }
 
     void setYResolution()
@@ -616,11 +610,6 @@ public:
         setFocus(FromPixel(px));
     }
 
-    void setFocusPixelInverted(int px)
-    {
-        setFocus(FromInvertedPixel(px));
-    }
-
     double pixelPerUnit() const
     {
         return mPixelPerMillimeter * mmPerUnit();
@@ -633,29 +622,9 @@ public:
         return static_cast<int>(result);
     }
 
-    int LsbToPixel(int lsb) const
-    {
-        return ToInvertedPixel(mGain * lsb);
-    }
-
-    int ToInvertedPixel(double unit) const
-    {
-        return pixelSize() - ToPixel(unit);
-    }
-
-    MicroSecond UsFromPixel(int px) const
-    {
-        return static_cast<MicroSecond>(1000000.0 * FromPixel(px));
-    }
-
     double FromPixel(int px) const
     {
         return min() + ((px / mPixelPerMillimeter) / mmPerUnit());
-    }
-
-    double FromInvertedPixel(int inverted) const
-    {
-        return FromPixel(pixelSize() - inverted);
     }
 
     void setData(double minData, double maxData)
@@ -689,12 +658,12 @@ public:
 
     void scrollLeft()
     {
-        scroll(unitSize() / 4);
+        scroll(-unitSize() / 4);
     }
 
     void scrollRight()
     {
-        scroll(-unitSize() / 4);
+        scroll(unitSize() / 4);
     }
 
     void scroll(double unit)
@@ -732,93 +701,148 @@ public:
     double max() const {return min() + unitSize();}
 };
 
+class Translate
+{
+private:
+    const UnitScale & mX;
+    const UnitScale & mY;
+    double mGain;
+public:
+    explicit Translate(const UnitScale & x, const UnitScale & y):
+        mX(x),
+        mY(y),
+        mGain(0)
+    {
+    }
+
+    void setGain(double gain)
+    {
+        mGain = gain;
+    }
+
+    double samplesPerPixel(MicroSecond samplePeriod) const
+    {
+        const double sps = 1000000.0 / samplePeriod;
+        return sps / mX.pixelPerUnit();
+    }
+
+    MicroSecond XPixelToMicroSecond(int xpx) const
+    {
+        return static_cast<MicroSecond>(1000000.0 * mX.FromPixel(xpx));
+    }
+
+    int MicroSecondToXPixel(MicroSecond us) const
+    {
+        return mX.ToPixel(static_cast<double>(us) / 1000000.0);
+    }
+
+    MilliVolt YPixelToUnit(int ypx) const
+    {
+        return mY.FromPixel(mY.pixelSize() - ypx);
+    }
+    
+    int UnitToYPixel(double unit) const
+    {
+        return mY.pixelSize() - mY.ToPixel(unit);
+    }
+    
+    int LsbToYPixel(int lsb) const
+    {
+        return UnitToYPixel(mGain * lsb);
+    }
+};
+
 inline bool IsEqual(double a, double b)
 {
-    if (std::fabs(a - b) < 0.001) return true;
-    qDebug() << a << b;
+    if (std::fabs(a - b) < 0.00001) return true;
+    qDebug() << "IsEqual" << a << b;
     return false;
 }
 
 TEST(UnitScale, UnitIsSecond)
 {
-    UnitScale scale(25);
-    scale.setPixelPerMillimeter(40, 10);
-    scale.setPixel(420);
-    scale.setData(0, 4);
-    EXPECT_TRUE(IsEqual(105.0, scale.mmSize()));
-    EXPECT_TRUE(IsEqual(  1.0, scale.zoomFactor()));
-    EXPECT_TRUE(IsEqual( 25.0, scale.mmPerUnit()));
-    EXPECT_TRUE(IsEqual(  4.2, scale.unitSize()));
-    EXPECT_TRUE(IsEqual( -0.1, scale.min()));
-    EXPECT_TRUE(IsEqual(  4.1, scale.max()));
-    EXPECT_TRUE(IsEqual( -0.1, scale.FromPixel(0)));
-    EXPECT_TRUE(IsEqual(  2.0, scale.FromPixel(210)));
-    EXPECT_TRUE(IsEqual(  4.1, scale.FromPixel(420)));
-    EXPECT_TRUE(IsEqual(100.0, scale.pixelPerUnit()));
-    EXPECT_EQ(  0, scale.ToPixel(-0.1));
-    EXPECT_EQ(210, scale.ToPixel(2.0));
-    EXPECT_EQ(420, scale.ToPixel(4.1));
+    UnitScale x(25);
+    x.setPixelPerMillimeter(40, 10);
+    x.setPixel(420);
+    x.setData(0, 4);
+    EXPECT_TRUE(IsEqual(105.0, x.mmSize()));
+    EXPECT_TRUE(IsEqual(  1.0, x.zoomFactor()));
+    EXPECT_TRUE(IsEqual( 25.0, x.mmPerUnit()));
+    EXPECT_TRUE(IsEqual(  4.2, x.unitSize()));
+    EXPECT_TRUE(IsEqual( -0.1, x.min()));
+    EXPECT_TRUE(IsEqual(  4.1, x.max()));
+    EXPECT_TRUE(IsEqual( -0.1, x.FromPixel(0)));
+    EXPECT_TRUE(IsEqual(  2.0, x.FromPixel(210)));
+    EXPECT_TRUE(IsEqual(  4.1, x.FromPixel(420)));
+    EXPECT_TRUE(IsEqual(100.0, x.pixelPerUnit()));
+    EXPECT_EQ(  0, x.ToPixel(-0.1));
+    EXPECT_EQ(210, x.ToPixel(2.0));
+    EXPECT_EQ(420, x.ToPixel(4.1));
 
-    scale.setData(0, 5);
-    EXPECT_TRUE(IsEqual( 0.5, scale.zoomFactor()));
-    EXPECT_TRUE(IsEqual(12.5, scale.mmPerUnit()));
-    EXPECT_TRUE(IsEqual( 8.4, scale.unitSize()));
-    EXPECT_TRUE(IsEqual(-1.7, scale.min()));
-    EXPECT_TRUE(IsEqual( 6.7, scale.max()));
+    x.setData(0, 5);
+    EXPECT_TRUE(IsEqual( 0.5, x.zoomFactor()));
+    EXPECT_TRUE(IsEqual(12.5, x.mmPerUnit()));
+    EXPECT_TRUE(IsEqual( 8.4, x.unitSize()));
+    EXPECT_TRUE(IsEqual(-1.7, x.min()));
+    EXPECT_TRUE(IsEqual( 6.7, x.max()));
 
-    scale.scroll(1.7);
-    EXPECT_TRUE(IsEqual(0.0, scale.min()));
-    EXPECT_TRUE(IsEqual(8.4, scale.max()));
+    x.scroll(1.7);
+    EXPECT_TRUE(IsEqual(0.0, x.min()));
+    EXPECT_TRUE(IsEqual(8.4, x.max()));
 
-    scale.setFocus(2.1);
-    scale.zoomOut();
-    EXPECT_TRUE(IsEqual(-2.1, scale.min()));
-    EXPECT_TRUE(IsEqual(14.7, scale.max()));
+    x.setFocus(2.1);
+    x.zoomOut();
+    EXPECT_TRUE(IsEqual(-2.1, x.min()));
+    EXPECT_TRUE(IsEqual(14.7, x.max()));
 
-    scale.zoomIn();
-    EXPECT_TRUE(IsEqual(0.0, scale.min()));
-    EXPECT_TRUE(IsEqual(8.4, scale.max()));
+    x.zoomIn();
+    EXPECT_TRUE(IsEqual(0.0, x.min()));
+    EXPECT_TRUE(IsEqual(8.4, x.max()));
 
-    scale.zoomIn();
-    EXPECT_TRUE(IsEqual(1.05, scale.min()));
-    EXPECT_TRUE(IsEqual(5.25, scale.max()));
-}
+    x.zoomIn();
+    EXPECT_TRUE(IsEqual(1.05, x.min()));
+    EXPECT_TRUE(IsEqual(5.25, x.max()));
 
-TEST(UnitScale, UnitIsMilliVolt)
-{
-    UnitScale scale(10);
-    scale.setPixelPerMillimeter(5, 1);
-    scale.setPixel(500);
-    scale.setData(-1, 1);
-    EXPECT_TRUE(IsEqual(100, scale.mmSize()));
-    EXPECT_TRUE(IsEqual(10, scale.unitSize()));
-    EXPECT_TRUE(IsEqual(1, scale.zoomFactor()));
-    EXPECT_TRUE(IsEqual(5, scale.max()));
-    EXPECT_TRUE(IsEqual(-5, scale.min()));
+    UnitScale y(10);
+    y.setPixelPerMillimeter(5, 1);
+    y.setPixel(500);
+    y.setData(-1, 1);
+    EXPECT_TRUE(IsEqual(100, y.mmSize()));
+    EXPECT_TRUE(IsEqual(10, y.unitSize()));
+    EXPECT_TRUE(IsEqual(1, y.zoomFactor()));
+    EXPECT_TRUE(IsEqual(5, y.max()));
+    EXPECT_TRUE(IsEqual(-5, y.min()));
     
-    scale.setData(-1, 3);
-    EXPECT_TRUE(IsEqual(10, scale.unitSize()));
-    EXPECT_TRUE(IsEqual(1, scale.zoomFactor()));
-    EXPECT_TRUE(IsEqual(6, scale.max()));
-    EXPECT_TRUE(IsEqual(-4, scale.min()));
+    y.setData(-1, 3);
+    EXPECT_TRUE(IsEqual(10, y.unitSize()));
+    EXPECT_TRUE(IsEqual(1, y.zoomFactor()));
+    EXPECT_TRUE(IsEqual(6, y.max()));
+    EXPECT_TRUE(IsEqual(-4, y.min()));
     
-    scale.setData(-6, 12);
-    EXPECT_TRUE(IsEqual(20, scale.unitSize()));
-    EXPECT_TRUE(IsEqual(0.5, scale.zoomFactor()));
-    EXPECT_TRUE(IsEqual(13, scale.max()));
-    EXPECT_TRUE(IsEqual(-7, scale.min()));
+    y.setData(-6, 12);
+    EXPECT_TRUE(IsEqual(20, y.unitSize()));
+    EXPECT_TRUE(IsEqual(0.5, y.zoomFactor()));
+    EXPECT_TRUE(IsEqual(13, y.max()));
+    EXPECT_TRUE(IsEqual(-7, y.min()));
 
-    EXPECT_EQ(500, scale.ToPixel(13));
-    EXPECT_EQ(250, scale.ToPixel(3.0));
-    EXPECT_EQ(  0, scale.ToPixel(-7));
+    EXPECT_EQ(500, y.ToPixel(13));
+    EXPECT_EQ(250, y.ToPixel(3.0));
+    EXPECT_EQ(  0, y.ToPixel(-7));
+
+    Translate t(x, y);
+    t.setGain(0.5);
     
-    EXPECT_EQ(  0, scale.ToInvertedPixel(13));
-    EXPECT_EQ(250, scale.ToInvertedPixel(3.0));
-    EXPECT_EQ(500, scale.ToInvertedPixel(-7));
+    EXPECT_EQ(  0, t.UnitToYPixel(13));
+    EXPECT_EQ(250, t.UnitToYPixel(3.0));
+    EXPECT_EQ(500, t.UnitToYPixel(-7));
     
-    EXPECT_TRUE(IsEqual(13, scale.FromInvertedPixel(0)));
-    EXPECT_TRUE(IsEqual( 3, scale.FromInvertedPixel(250)));
-    EXPECT_TRUE(IsEqual(-7, scale.FromInvertedPixel(500)));
+    EXPECT_EQ(  0, t.LsbToYPixel(26));
+    EXPECT_EQ(250, t.LsbToYPixel( 6));
+    EXPECT_EQ(500, t.LsbToYPixel(-14));
+    
+    EXPECT_TRUE(IsEqual(13, t.YPixelToUnit(0)));
+    EXPECT_TRUE(IsEqual( 3, t.YPixelToUnit(250)));
+    EXPECT_TRUE(IsEqual(-7, t.YPixelToUnit(500)));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -838,8 +862,7 @@ private:
     void DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data);
 
     const DataChannel & mData;
-    const UnitScale & mTimeScale;
-    UnitScale mValueScale;
+    Translate mTranslate;
     MeasurePerformance mMeasurePerformance;
     double mSamplesPerPixel;
     const QPen mPointPen;
@@ -926,8 +949,7 @@ DrawChannel::DrawChannel(const DataChannel & data,
         const UnitScale & timeScale,
         const UnitScale & valueScale):
     mData(data),
-    mTimeScale(timeScale),
-    mValueScale(valueScale),
+    mTranslate(timeScale, valueScale),
     mMeasurePerformance("DrawChannel"),
     mSamplesPerPixel(0),
     mPointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
@@ -941,28 +963,15 @@ void DrawChannel::Draw(QWidget & parent, const QRect & rect)
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(mLinePen);
 
-    qDebug() << rect.left() << rect.right();
-
     DrawSamples(painter, rect);
-}
-
-inline static MicroSecond SecondToMicroSecond(double seconds)
-{
-    return static_cast<MicroSecond>(seconds * 1000000.0);
-}
-
-inline static double MicroSecondToSecond(MicroSecond us)
-{
-    return static_cast<double>(us) / 1000000.0;
 }
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
     for (auto & data:mData.Files())
     {
-        mValueScale.setGain(data.SampleGain());
-        mSamplesPerPixel = 1.0 /
-            (mTimeScale.pixelPerUnit() * MicroSecondToSecond(data.SamplePeriod()));
+        mTranslate.setGain(data.SampleGain());
+        mSamplesPerPixel = mTranslate.samplesPerPixel(data.SamplePeriod());
 
         if (mSamplesPerPixel > 5)
         {
@@ -981,15 +990,13 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
     const int indexEnd = data.Values().size() - 1;
     const int xpxEnd = rect.right() + 2;
         
-    painter.drawLine(0 , 0, rect.width(), rect.height());
-        
     for (int xpx = rect.left(); xpx < xpxEnd; ++xpx)
     {
-        const MicroSecond timeFirst = mTimeScale.UsFromPixel(xpx);
+        const MicroSecond timeFirst = mTranslate.XPixelToMicroSecond(xpx);
         const int indexFirst = timeFirst / samplePeriod;
         if (indexFirst < 1) continue;
 
-        const MicroSecond timeLast = mTimeScale.UsFromPixel(xpx + 1);
+        const MicroSecond timeLast = mTranslate.XPixelToMicroSecond(xpx + 1);
         const int indexLast = timeLast / samplePeriod;
         if (indexLast > indexEnd) return;
 
@@ -997,8 +1004,8 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
         // - from last sample in previous xpx
         // - to first sample in current xpx
         auto itFirst = data.Values().begin() + indexFirst;
-        auto first = mValueScale.LsbToPixel(*itFirst);
-        auto last = mValueScale.LsbToPixel(*(itFirst - 1));
+        auto first = mTranslate.LsbToYPixel(*itFirst);
+        auto last = mTranslate.LsbToYPixel(*(itFirst - 1));
         painter.drawLine(xpx - 1, last, xpx, first);
 
         // 2nd line per xpx:
@@ -1006,8 +1013,8 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
         // - to max sample in current xpx
         auto itLast = itFirst + (indexLast - indexFirst);
         auto minmax = std::minmax_element(itFirst, itLast);
-        auto min = mValueScale.LsbToPixel(*minmax.first);
-        auto max = mValueScale.LsbToPixel(*minmax.second);
+        auto min = mTranslate.LsbToYPixel(*minmax.first);
+        auto max = mTranslate.LsbToYPixel(*minmax.second);
         painter.drawLine(xpx, min, xpx, max);
     }
 }
@@ -1015,8 +1022,8 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
 void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
     const MicroSecond samplePeriod = data.SamplePeriod();
-    const MicroSecond timeFirst = mTimeScale.UsFromPixel(rect.left());
-    const MicroSecond timeLast = mTimeScale.UsFromPixel(rect.right() + 2);
+    const MicroSecond timeFirst = mTranslate.XPixelToMicroSecond(rect.left());
+    const MicroSecond timeLast = mTranslate.XPixelToMicroSecond(rect.right() + 2);
     const int indexFirst = timeFirst / samplePeriod;
     const int indexLast = timeLast / samplePeriod + 2;
     const int indexBegin = (indexFirst < 0) ? 0 : indexFirst;
@@ -1027,9 +1034,9 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
     const bool drawPoints = mSamplesPerPixel < 0.5;
     auto now  = data.Values().begin() + indexBegin;
     auto end  = data.Values().begin() + indexEnd;
-    auto yold = mValueScale.LsbToPixel(*now);
+    auto yold = mTranslate.LsbToYPixel(*now);
     auto time = indexBegin * samplePeriod;
-    auto xold = mTimeScale.ToPixel(MicroSecondToSecond(time));
+    auto xold = mTranslate.MicroSecondToXPixel(time);
     ++now;
     time += samplePeriod;
 
@@ -1043,8 +1050,8 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
 
     while (now < end)
     {
-        auto ynow = mValueScale.LsbToPixel(*now);
-        auto xnow = mTimeScale.ToPixel(MicroSecondToSecond(time));
+        auto ynow = mTranslate.LsbToYPixel(*now);
+        auto xnow = mTranslate.MicroSecondToXPixel(time);
         ++now;
         time += samplePeriod;
         painter.drawLine(xold, yold, xnow, ynow);
@@ -1169,6 +1176,10 @@ public:
     void lessX() {mTimeScale.zoomOut(); update();}
     void moreY() {mValueScale.zoomIn(); update();}
     void lessY() {mValueScale.zoomOut(); update();}
+    void left()  {mTimeScale.scrollLeft(); update();}
+    void right() {mTimeScale.scrollRight(); update();}
+    void down()  {mValueScale.scrollLeft(); update();}
+    void up()    {mValueScale.scrollRight(); update();}
 signals:
     void signalClicked(GuiWave *, QMouseEvent *);
 private:
@@ -1185,7 +1196,8 @@ private:
     void mousePressEvent(QMouseEvent * evt) override
     {
         mTimeScale.setFocusPixel(evt->pos().x());
-        mValueScale.setFocusPixelInverted(evt->pos().y());
+        const Translate t(mTimeScale, mValueScale);
+        mValueScale.setFocus(t.YPixelToUnit(evt->pos().y()));
         emit signalClicked(this, evt);
     }
 
@@ -1194,7 +1206,6 @@ private:
         mValueScale.setPixel(height());
         mTimeScale.setPixel(width());
         update();
-        qDebug() << "resizeEvent" << width() << height();
     }
 };
 
@@ -1252,7 +1263,7 @@ public:
         QVBoxLayout * layout = new QVBoxLayout(this);
         for (auto & chan:mData.Channels())
         {
-            GuiChannel * gui = new GuiChannel(this, chan, MicroSecondToSecond(data.Duration()));
+            GuiChannel * gui = new GuiChannel(this, chan, data.Seconds());
             layout->addWidget(gui);
             mChannels.push_back(gui);
             connect(gui->Wave(), SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
@@ -1265,15 +1276,11 @@ public:
     void moreY() {for (auto & chan:mChannels) {chan->Wave()->moreY();}}
     void lessX() {for (auto & chan:mChannels) {chan->Wave()->lessX();}}
     void lessY() {for (auto & chan:mChannels) {chan->Wave()->lessY();}}
+    void left()  {for (auto & chan:mChannels) {chan->Wave()->left();}}
+    void right() {for (auto & chan:mChannels) {chan->Wave()->right();}}
+    void up()    {for (auto & chan:mChannels) {chan->Wave()->up();}}
+    void down()  {for (auto & chan:mChannels) {chan->Wave()->down();}}
 private:
-    void paintEvent(QPaintEvent *) override
-    {
-        QPen pen(Qt::blue, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-        QPainter painter(this);
-        painter.setPen(pen);
-        painter.drawLine(0, 0, width(), height());
-    }
-
     GuiMeasure * createMeasure(QWidget * parent)
     {
         int w;
@@ -1288,16 +1295,14 @@ private:
         }
         else
         {
-            w = 20;
-            h = 20;
+            w = 50;
+            h = 50;
         }
 
         GuiMeasure * gui = new GuiMeasure(parent);
         gui->resize(w, h);
         gui->setMinimumSize(25, 25);
         gui->show();
-        connect(gui, SIGNAL(signalResized()), this, SLOT(slotGuiMeasureResized()));
-        connect(gui, SIGNAL(signalMoved()), this, SLOT(slotGuiMeasureMoved()));
         return gui;
     }
 };
@@ -1320,6 +1325,10 @@ private slots:
     void lessX()    {if (mGui) {mGui->lessX();}}
     void moreY()    {if (mGui) {mGui->moreY();}}
     void lessY()    {if (mGui) {mGui->lessY();}}
+    void left()     {if (mGui) {mGui->left();}}
+    void right()    {if (mGui) {mGui->right();}}
+    void up()       {if (mGui) {mGui->up();}}
+    void down()     {if (mGui) {mGui->down();}}
 public:
     MainWindow():
         mSetup(),
@@ -1350,6 +1359,10 @@ public:
         ACTION(viewMenu, "X-Zoom-Out", lessX, Qt::Key_X + Qt::SHIFT);
         ACTION(viewMenu, "Y-Zoom-In", moreY, Qt::Key_Y);
         ACTION(viewMenu, "Y-Zoom-Out", lessY, Qt::Key_Y + Qt::SHIFT);
+        ACTION(viewMenu, "Left", left, Qt::Key_Left);
+        ACTION(viewMenu, "Right", right, Qt::Key_Right);
+        ACTION(viewMenu, "Up", up, Qt::Key_Up);
+        ACTION(viewMenu, "Down", down, Qt::Key_Down);
 #undef ACTION
     }
 
