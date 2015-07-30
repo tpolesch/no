@@ -1146,38 +1146,60 @@ public:
         setFocusPolicy(Qt::StrongFocus);
     }
 
+    QString ValueUnit() const
+    {
+        if (mData.Files().size() < 1) return "";
+        return mData.Files()[0].Unit();
+    }
+
+    QString FormatValue(double value) const
+    {
+        QString result;
+        QTextStream ss(&result);
+        ss << value << ValueUnit();
+        return result;
+    }
+
+    QString FormatTime(double time) const
+    {
+        double abs = std::fabs(time);
+        QString result;
+        QTextStream ss(&result);
+
+        if (abs < 1.0)
+        {
+            ss << time * 1000.0 << "ms";
+        }
+        else if (abs > 3600.0)
+        {
+            ss << time / 3600.0 << "h";
+        }
+        else if (abs > 60.0)
+        {
+            ss << time / 60.0 << "min";
+        }
+        else
+        {
+            ss << time << "s";
+        }
+
+        return result;
+    }
+
     QString status(const GuiMeasure & measure) const
     {
-        QString unit = mData.Files().size() > 0
-            ? mData.Files()[0].Unit()
-            : QString("?");
-        double time = mTimeScale.PixelToUnit(measure.width());
-        QString timeUnit("s");
-
-        if (time < 1)
-        {
-            time *= 1000;
-            timeUnit = "ms";
-        }
-        else if (time > 3600)
-        {
-            time /= 3600;
-            timeUnit = "h";
-        }
-        else if (time > 60)
-        {
-            time /= 60;
-            timeUnit = "min";
-        }
-
         QString result;
         QTextStream txt(&result);
-        txt << "Z={"
+        txt << "F={"
+            << FormatTime(mTimeScale.focus()) << " "
+            << FormatValue(mValueScale.focus()) << "} "
+            << "} M={"
+            << FormatTime(mTimeScale.PixelToUnit(measure.width()))
+            << FormatValue(mValueScale.PixelToUnit(measure.height()))
+            << "} Z={"
             << mTimeScale.mmPerUnit() << "mm/s, "
-            << mValueScale.mmPerUnit() << "mm/" << unit
-            << "}, M={"
-            << time << timeUnit << ", "
-            << mValueScale.PixelToUnit(measure.height()) << unit << "}";
+            << mValueScale.mmPerUnit() << "mm/" << ValueUnit()
+            << "}";
         return result;
     }
 
