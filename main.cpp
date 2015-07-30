@@ -145,6 +145,11 @@ public:
         return mTxt;
     }
 
+    const QString & Unit() const
+    {
+        return mUnit;
+    }
+
     bool IsOperator(const QString & arg) const
     {
         return (mOperator == arg);
@@ -628,14 +633,19 @@ public:
 
     int ToPixel(double unit) const
     {
-        double result = (unit - min()) * mmPerUnit() * mPixelPerMillimeter;
+        double result = (unit - min()) * pixelPerUnit();
         result += (result > 0) ? 0.5 : -0.5;
         return static_cast<int>(result);
     }
 
+    double PixelToUnit(int px) const
+    {
+        return px / pixelPerUnit();
+    }
+
     double FromPixel(int px) const
     {
-        return min() + ((px / mPixelPerMillimeter) / mmPerUnit());
+        return min() + PixelToUnit(px);
     }
 
     void setData(double minData, double maxData)
@@ -1131,6 +1141,43 @@ public:
         mValueScale.setYResolution();
         mValueScale.setPixel(height());
         mValueScale.setData(data.Min(), data.Max());
+
+        setFocusPolicy(Qt::StrongFocus);
+    }
+
+    QString status(const GuiMeasure & measure) const
+    {
+        QString unit = mData.Files().size() > 0
+            ? mData.Files()[0].Unit()
+            : QString("?");
+        double time = mTimeScale.PixelToUnit(measure.width());
+        QString timeUnit("s");
+
+        if (time < 1)
+        {
+            time *= 1000;
+            timeUnit = "ms";
+        }
+        else if (time > 3600)
+        {
+            time /= 3600;
+            timeUnit = "h";
+        }
+        else if (time > 60)
+        {
+            time /= 60;
+            timeUnit = "min";
+        }
+
+        QString result;
+        QTextStream txt(&result);
+        txt << "Z={"
+            << mTimeScale.mmPerUnit() << "mm/s, "
+            << mValueScale.mmPerUnit() << "mm/" << unit
+            << "}, M={"
+            << time << timeUnit << ", "
+            << mValueScale.PixelToUnit(measure.height()) << unit << "}";
+        return result;
     }
 
     void setXFocus(int xpx)
@@ -1154,6 +1201,7 @@ public:
     void up()       {mValueScale.scrollRight(); update();}
 signals:
     void signalClicked(GuiWave *, QMouseEvent *);
+    void signalSelected(GuiWave *);
 private:
     const DataChannel & mData;
     UnitScale mTimeScale;
@@ -1175,6 +1223,11 @@ private:
         mValueScale.setPixel(height());
         mTimeScale.setPixel(width());
         update();
+    }
+    
+    void focusInEvent(QFocusEvent *) override
+    {
+        emit signalSelected(this);
     }
 };
 
@@ -1210,18 +1263,20 @@ class GuiMain : public QWidget
 private:
     const GuiSetup & mSetup;    
     const DataMain & mData;
+    QStatusBar * mStatus;
     GuiMeasure * mMeasure;
     GuiWave * mMeasuredWave;
     std::vector<GuiChannel *> mChannels;
 private slots:
+    void slotWaveSelected(GuiWave * sender)
+    {
+        setMeasuredWave(sender);
+        slotMeasureMoved();
+    }
+
     void slotWaveClicked(GuiWave * sender, QMouseEvent * event)
     {
-        if (mMeasuredWave != sender)
-        {
-            mMeasuredWave = sender;
-            mMeasure = createMeasure(sender);
-        }
-
+        setMeasuredWave(sender);
         QRect frame = mMeasure->rect();
         frame.moveCenter(event->pos());
         mMeasure->move(frame.topLeft());
@@ -1233,12 +1288,14 @@ private slots:
         const QPoint focus = mMeasure->geometry().center();
         for (auto & chan:mChannels) {chan->wave().setXFocus(focus.x());}
         if (mMeasuredWave) {mMeasuredWave->setYFocus(focus.y());}
+        updateStatus();
     }
 public:
-    GuiMain(QWidget * parent, const GuiSetup & setup, const DataMain & data):
+    GuiMain(QMainWindow * parent, const GuiSetup & setup, const DataMain & data):
         QWidget(parent),
         mSetup(setup),
         mData(data),
+        mStatus(parent->statusBar()),
         mMeasure(nullptr),
         mMeasuredWave(nullptr),
         mChannels()
@@ -1251,43 +1308,73 @@ public:
             mChannels.push_back(gui);
             connect(&gui->wave(), SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
                     this, SLOT(slotWaveClicked(GuiWave *, QMouseEvent *)));
+            connect(&gui->wave(), SIGNAL(signalSelected(GuiWave *)),
+                    this, SLOT(slotWaveSelected(GuiWave *)));
         }
         setLayout(layout);
     }
 
-    void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn();}}
-    void xzoomOut() {for (auto & chan:mChannels) {chan->xzoomOut();}}
-    void yzoomIn()  {for (auto & chan:mChannels) {chan->yzoomIn();}}
-    void yzoomOut() {for (auto & chan:mChannels) {chan->yzoomOut();}}
-    void left()     {for (auto & chan:mChannels) {chan->left();}}
-    void right()    {for (auto & chan:mChannels) {chan->right();}}
-    void up()       {for (auto & chan:mChannels) {chan->up();}}
-    void down()     {for (auto & chan:mChannels) {chan->down();}}
+    void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn(); }; updateStatus();}
+    void xzoomOut() {for (auto & chan:mChannels) {chan->xzoomOut();}; updateStatus();}
+    void yzoomIn()  {for (auto & chan:mChannels) {chan->yzoomIn(); }; updateStatus();}
+    void yzoomOut() {for (auto & chan:mChannels) {chan->yzoomOut();}; updateStatus();}
+    void left()     {for (auto & chan:mChannels) {chan->left();    }; updateStatus();}
+    void right()    {for (auto & chan:mChannels) {chan->right();   }; updateStatus();}
+    void up()       {for (auto & chan:mChannels) {chan->up();      }; updateStatus();}
+    void down()     {for (auto & chan:mChannels) {chan->down();    }; updateStatus();}
 private:
-    GuiMeasure * createMeasure(QWidget * parent)
+    void updateStatus()
     {
-        int w;
-        int h;
-
-        if (mMeasure)
+        if (mMeasuredWave && mMeasure)
         {
-            w = mMeasure->width();
-            h = mMeasure->height();
-            delete mMeasure;
-            mMeasure = nullptr;
+            mStatus->showMessage(mMeasuredWave->status(*mMeasure));
         }
         else
         {
-            w = 50;
-            h = 50;
+            mStatus->clearMessage();
+        }
+    }
+
+    void setMeasuredWave(GuiWave * wave)
+    {
+        if ((mMeasuredWave == wave) || (wave == nullptr))
+        {
+            return;
         }
 
-        GuiMeasure * gui = new GuiMeasure(parent);
-        gui->resize(w, h);
-        gui->setMinimumSize(25, 25);
+        QRect geo;
+
+        if (mMeasure)
+        {
+            geo = mMeasure->geometry();
+        }
+        else
+        {
+            geo.setSize(QSize(50, 50));
+            geo.moveCenter(wave->rect().center());
+        }
+
+        delete mMeasure;
+        GuiMeasure * gui = new GuiMeasure(wave);
+        gui->setGeometry(geo);
+        gui->setMinimumSize(30, 30);
         gui->show();
         connect(gui, SIGNAL(signalMoved()), this, SLOT(slotMeasureMoved()));
-        return gui;
+
+        mMeasuredWave = wave;
+        mMeasure = gui;
+    }
+
+    void resizeEvent(QResizeEvent *) override
+    {
+        if (mMeasure && mMeasuredWave)
+        {
+            QRect geo;
+            geo.setSize(QSize(50, 50));
+            geo.moveCenter(mMeasuredWave->rect().center());
+            mMeasure->setGeometry(geo);
+            slotMeasureMoved();
+        }
     }
 };
 
