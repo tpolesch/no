@@ -19,7 +19,7 @@ inline static MicroSecond FromMilliSec(IntType ms)
 // MeasurePerformance
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifdef MEASURE_PERFORMANCE
+#ifdef IS_DEBUG_BUILD
 class MeasurePerformance
 {
 private:
@@ -38,7 +38,9 @@ public:
         qDebug() << mName << mTimer.elapsed() << "ms";
     }
 };
-#else
+#endif
+
+#ifdef IS_RELEASE_BUILD
 class MeasurePerformance
 {
 public:
@@ -93,7 +95,9 @@ public:
         mLabel("")
     {
         Parse();
-        if (mFileName.size() > 0) {SetSamples(path);}
+        if (mFileName == "dummy") return;
+        if (mFileName.size() < 1) return;
+        SetSamples(path);
     }
 
     MilliVolt Min() const
@@ -136,6 +140,11 @@ public:
         return (mErrors == 0);
     }
 
+    const QString & Txt() const
+    {
+        return mTxt;
+    }
+
     bool IsOperator(const QString & arg) const
     {
         return (mOperator == arg);
@@ -144,18 +153,25 @@ public:
     void Minus(const DataFile & other)
     {
         std::vector<int> result;
+        mSignalDelay = 0;
 
         for (MicroSecond us = 0; us < Duration(); us += SamplePeriod())
         {
             const MilliVolt a = At(us);
             const MilliVolt b = other.At(us);
-            if (isnan(a) || (isnan(b))) continue;
+
+            if (isnan(a) || (isnan(b)))
+            {
+                if (result.size() > 0) {break;}
+                mSignalDelay = us;
+                continue;
+            }
+
             const int lsb = static_cast<int>((a - b) / SampleGain());
             result.push_back(lsb);
         }
 
         mValues = result;
-        mSignalDelay = 0;
     }
 
     double At(MicroSecond us) const
@@ -173,7 +189,6 @@ private:
 
         if (!read.open(QIODevice::ReadOnly))
         {
-            qDebug() << "Could not open:" << fullName;
             AddError();
             return;
         }
@@ -299,18 +314,8 @@ private:
     void AddError()
     {
         ++mErrors;
-        qDebug() << "Could not parse: " << qPrintable(mTxt);
     }
 };
-
-TEST(DataFile, Parse)
-{
-    EXPECT_TRUE(DataFile("wave.dat 500 1 mV X", "").IsValid());
-    EXPECT_TRUE(DataFile("wave.dat 500 1.0 mV X", "").IsValid());
-    EXPECT_FALSE(DataFile("wave.dat 500 1 mV ", "").IsValid()); // label missing
-    EXPECT_FALSE(DataFile("wave.dat 500 D mV X", "").IsValid()); // divisor wrong
-    EXPECT_FALSE(DataFile("wave.dat 500.0 1 mV X", "").IsValid()); // sps wrong
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 // class DataChannel
@@ -416,7 +421,12 @@ public:
         
         for (auto & file:fileList)
         {
-            if (!file.IsValid()) return;
+            if (!file.IsValid())
+            {
+                qDebug() << "Could not parse:" << file.Txt();
+                return;
+            }
+
             if (file.IsOperator(">")) New(file);
             if (file.IsOperator("+")) Plus(file);
             if (file.IsOperator("-")) Minus(file);
@@ -734,7 +744,7 @@ public:
             << "spp:" << samplesPerPixel();
     }
 
-    void setFile(const DataFile & data)
+    void setData(const DataFile & data)
     {
         mGain = data.SampleGain();
         mDelay = data.SignalDelay();
@@ -751,17 +761,7 @@ public:
         const double sps = 1000000.0 / mSamplePeriod;
         return sps / mX.pixelPerUnit();
     }
-private:
-    MicroSecond XPixelToMicroSecond(int xpx) const
-    {
-        return static_cast<MicroSecond>(1000000.0 * mX.FromPixel(xpx));
-    }
 
-    int MicroSecondToXPixel(MicroSecond us) const
-    {
-        return mX.ToPixel(static_cast<double>(us) / 1000000.0);
-    }
-public:
     int XPixelToSampleIndex(int xpx) const
     {
         return (XPixelToMicroSecond(xpx) - mDelay) / mSamplePeriod;
@@ -786,100 +786,17 @@ public:
     {
         return UnitToYPixel(mGain * lsb);
     }
+private:
+    MicroSecond XPixelToMicroSecond(int xpx) const
+    {
+        return static_cast<MicroSecond>(1000000.0 * mX.FromPixel(xpx));
+    }
+
+    int MicroSecondToXPixel(MicroSecond us) const
+    {
+        return mX.ToPixel(static_cast<double>(us) / 1000000.0);
+    }
 };
-
-inline bool IsEqual(double a, double b)
-{
-    if (std::fabs(a - b) < 0.00001) return true;
-    qDebug() << "IsEqual" << a << b;
-    return false;
-}
-
-TEST(UnitScale, UnitIsSecond)
-{
-    UnitScale x(25);
-    x.setPixelPerMillimeter(40, 10);
-    x.setPixel(420);
-    x.setData(0, 4);
-    EXPECT_TRUE(IsEqual(105.0, x.mmSize()));
-    EXPECT_TRUE(IsEqual(  1.0, x.zoomFactor()));
-    EXPECT_TRUE(IsEqual( 25.0, x.mmPerUnit()));
-    EXPECT_TRUE(IsEqual(  4.2, x.unitSize()));
-    EXPECT_TRUE(IsEqual( -0.1, x.min()));
-    EXPECT_TRUE(IsEqual(  4.1, x.max()));
-    EXPECT_TRUE(IsEqual( -0.1, x.FromPixel(0)));
-    EXPECT_TRUE(IsEqual(  2.0, x.FromPixel(210)));
-    EXPECT_TRUE(IsEqual(  4.1, x.FromPixel(420)));
-    EXPECT_TRUE(IsEqual(100.0, x.pixelPerUnit()));
-    EXPECT_EQ(  0, x.ToPixel(-0.1));
-    EXPECT_EQ(210, x.ToPixel(2.0));
-    EXPECT_EQ(420, x.ToPixel(4.1));
-
-    x.setData(0, 5);
-    EXPECT_TRUE(IsEqual( 0.5, x.zoomFactor()));
-    EXPECT_TRUE(IsEqual(12.5, x.mmPerUnit()));
-    EXPECT_TRUE(IsEqual( 8.4, x.unitSize()));
-    EXPECT_TRUE(IsEqual(-1.7, x.min()));
-    EXPECT_TRUE(IsEqual( 6.7, x.max()));
-
-    x.scroll(1.7);
-    EXPECT_TRUE(IsEqual(0.0, x.min()));
-    EXPECT_TRUE(IsEqual(8.4, x.max()));
-
-    x.setFocus(2.1);
-    x.zoomOut();
-    EXPECT_TRUE(IsEqual(-2.1, x.min()));
-    EXPECT_TRUE(IsEqual(14.7, x.max()));
-
-    x.zoomIn();
-    EXPECT_TRUE(IsEqual(0.0, x.min()));
-    EXPECT_TRUE(IsEqual(8.4, x.max()));
-
-    x.zoomIn();
-    EXPECT_TRUE(IsEqual(1.05, x.min()));
-    EXPECT_TRUE(IsEqual(5.25, x.max()));
-
-    UnitScale y(10);
-    y.setPixelPerMillimeter(5, 1);
-    y.setPixel(500);
-    y.setData(-1, 1);
-    EXPECT_TRUE(IsEqual(100, y.mmSize()));
-    EXPECT_TRUE(IsEqual(10, y.unitSize()));
-    EXPECT_TRUE(IsEqual(1, y.zoomFactor()));
-    EXPECT_TRUE(IsEqual(5, y.max()));
-    EXPECT_TRUE(IsEqual(-5, y.min()));
-    
-    y.setData(-1, 3);
-    EXPECT_TRUE(IsEqual(10, y.unitSize()));
-    EXPECT_TRUE(IsEqual(1, y.zoomFactor()));
-    EXPECT_TRUE(IsEqual(6, y.max()));
-    EXPECT_TRUE(IsEqual(-4, y.min()));
-    
-    y.setData(-6, 12);
-    EXPECT_TRUE(IsEqual(20, y.unitSize()));
-    EXPECT_TRUE(IsEqual(0.5, y.zoomFactor()));
-    EXPECT_TRUE(IsEqual(13, y.max()));
-    EXPECT_TRUE(IsEqual(-7, y.min()));
-
-    EXPECT_EQ(500, y.ToPixel(13));
-    EXPECT_EQ(250, y.ToPixel(3.0));
-    EXPECT_EQ(  0, y.ToPixel(-7));
-
-    Translate t(x, y);
-    t.setGain(0.5);
-    
-    EXPECT_EQ(  0, t.UnitToYPixel(13));
-    EXPECT_EQ(250, t.UnitToYPixel(3.0));
-    EXPECT_EQ(500, t.UnitToYPixel(-7));
-    
-    EXPECT_EQ(  0, t.LsbToYPixel(26));
-    EXPECT_EQ(250, t.LsbToYPixel( 6));
-    EXPECT_EQ(500, t.LsbToYPixel(-14));
-    
-    EXPECT_TRUE(IsEqual(13, t.YPixelToUnit(0)));
-    EXPECT_TRUE(IsEqual( 3, t.YPixelToUnit(250)));
-    EXPECT_TRUE(IsEqual(-7, t.YPixelToUnit(500)));
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 // DrawChannel
@@ -1001,18 +918,18 @@ void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
-    for (auto & file:mData.Files())
+    for (auto & data:mData.Files())
     {
-        mTranslate.setFile(file);
+        mTranslate.setData(data);
         mTranslate.debug(rect);
 
         if (mTranslate.samplesPerPixel() > 5)
         {
-            DrawPixelWise(painter, rect, file);
+            DrawPixelWise(painter, rect, data);
         }
         else
         {
-            DrawSampleWise(painter, rect, file);
+            DrawSampleWise(painter, rect, data);
         }
     }
 }
@@ -1144,7 +1061,7 @@ void ArgumentParser::ParseLine(const QString & line)
 
     if (longOption.exactMatch(line))
     {
-        qDebug() << "Unknown option: " << longOption.cap(0);
+        std::cout << "Unknown option: " << longOption.cap(0).toStdString() << std::endl;
         mIsInvalid = true;
         return;
     }
@@ -1153,7 +1070,7 @@ void ArgumentParser::ParseLine(const QString & line)
 
     if (shortOption.exactMatch(line))
     {
-        qDebug() << "Unknown option: " << shortOption.cap(0);
+        std::cout << "Unknown option: " << shortOption.cap(0).toStdString() << std::endl;
         mIsInvalid = true;
         return;
     }
@@ -1164,12 +1081,13 @@ void ArgumentParser::ParseLine(const QString & line)
 
 void ArgumentParser::PrintUsage()
 {
-    qDebug("Usage:");
-    qDebug("  %s [options] [file]", qPrintable(mApplication));
-    qDebug("Options:");
-    qDebug("  -t --test   ... execute unit tests");
-    qDebug("  -p --points ... draw sample points");
-    qDebug("  -h --help   ... show this help");
+    std::stringstream ss;
+    ss << "Usage:" << std::endl;
+    ss << "  " << mApplication.toStdString() << " [options] [file]" << std::endl;
+    ss << "Options:" << std::endl;
+    ss << "  -t --test   ... execute unit tests" << std::endl;
+    ss << "  -h --help   ... show this help" << std::endl;
+    std::cout << ss.str();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1205,14 +1123,14 @@ public:
         mTimeScale.setFocusPixel(xpx);
     }
 
-    void moreX() {mTimeScale.zoomIn(); update();}
-    void lessX() {mTimeScale.zoomOut(); update();}
-    void moreY() {mValueScale.zoomIn(); update();}
-    void lessY() {mValueScale.zoomOut(); update();}
-    void left()  {mTimeScale.scrollLeft(); update();}
-    void right() {mTimeScale.scrollRight(); update();}
-    void down()  {mValueScale.scrollLeft(); update();}
-    void up()    {mValueScale.scrollRight(); update();}
+    void xzoomIn()  {mTimeScale.zoomIn(); update();}
+    void xzoomOut() {mTimeScale.zoomOut(); update();}
+    void yzoomIn()  {mValueScale.zoomIn(); update();}
+    void yzoomOut() {mValueScale.zoomOut(); update();}
+    void left()     {mTimeScale.scrollLeft(); update();}
+    void right()    {mTimeScale.scrollRight(); update();}
+    void down()     {mValueScale.scrollLeft(); update();}
+    void up()       {mValueScale.scrollRight(); update();}
 signals:
     void signalClicked(GuiWave *, QMouseEvent *);
 private:
@@ -1255,10 +1173,16 @@ public:
         setLayout(layout);
     }
 
-    GuiWave * Wave()
-    {
-        return mWave;
-    }
+    void xzoomIn()  {wave().xzoomIn();}
+    void xzoomOut() {wave().xzoomOut();}
+    void yzoomIn()  {wave().yzoomIn();}
+    void yzoomOut() {wave().yzoomOut();}
+    void left()     {wave().left();}
+    void right()    {wave().right();}
+    void down()     {wave().down();}
+    void up()       {wave().up();}
+
+    GuiWave & wave() {return *mWave;}
 };
 
 class GuiMain : public QWidget
@@ -1288,7 +1212,7 @@ private slots:
     void slotMeasureMoved()
     {
         const int xpx = mMeasure->geometry().center().x();
-        for (auto & chan:mChannels) {chan->Wave()->setTimeFocus(xpx);}
+        for (auto & chan:mChannels) {chan->wave().setTimeFocus(xpx);}
     }
 public:
     GuiMain(QWidget * parent, const GuiSetup & setup, const DataMain & data):
@@ -1305,20 +1229,20 @@ public:
             GuiChannel * gui = new GuiChannel(this, chan, data.Seconds());
             layout->addWidget(gui);
             mChannels.push_back(gui);
-            connect(gui->Wave(), SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
+            connect(&gui->wave(), SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
                     this, SLOT(slotWaveClicked(GuiWave *, QMouseEvent *)));
         }
         setLayout(layout);
     }
 
-    void moreX() {for (auto & chan:mChannels) {chan->Wave()->moreX();}}
-    void moreY() {for (auto & chan:mChannels) {chan->Wave()->moreY();}}
-    void lessX() {for (auto & chan:mChannels) {chan->Wave()->lessX();}}
-    void lessY() {for (auto & chan:mChannels) {chan->Wave()->lessY();}}
-    void left()  {for (auto & chan:mChannels) {chan->Wave()->left();}}
-    void right() {for (auto & chan:mChannels) {chan->Wave()->right();}}
-    void up()    {for (auto & chan:mChannels) {chan->Wave()->up();}}
-    void down()  {for (auto & chan:mChannels) {chan->Wave()->down();}}
+    void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn();}}
+    void xzoomOut() {for (auto & chan:mChannels) {chan->xzoomOut();}}
+    void yzoomIn()  {for (auto & chan:mChannels) {chan->yzoomIn();}}
+    void yzoomOut() {for (auto & chan:mChannels) {chan->yzoomOut();}}
+    void left()     {for (auto & chan:mChannels) {chan->left();}}
+    void right()    {for (auto & chan:mChannels) {chan->right();}}
+    void up()       {for (auto & chan:mChannels) {chan->up();}}
+    void down()     {for (auto & chan:mChannels) {chan->down();}}
 private:
     GuiMeasure * createMeasure(QWidget * parent)
     {
@@ -1358,13 +1282,10 @@ private slots:
     void Open()     {Open(QFileDialog::getOpenFileName(this, QString("Open"), QDir::currentPath()));}
     void Reload()   {Open(mSetup.fileName);}
     void Exit()     {close();}
-    void Unzoom()   {}
-    void more()     {}
-    void less()     {}
-    void moreX()    {if (mGui) {mGui->moreX();}}
-    void lessX()    {if (mGui) {mGui->lessX();}}
-    void moreY()    {if (mGui) {mGui->moreY();}}
-    void lessY()    {if (mGui) {mGui->lessY();}}
+    void xzoomIn()  {if (mGui) {mGui->xzoomIn();}}
+    void xzoomOut() {if (mGui) {mGui->xzoomOut();}}
+    void yzoomIn()  {if (mGui) {mGui->yzoomIn();}}
+    void yzoomOut() {if (mGui) {mGui->yzoomOut();}}
     void left()     {if (mGui) {mGui->left();}}
     void right()    {if (mGui) {mGui->right();}}
     void up()       {if (mGui) {mGui->up();}}
@@ -1392,13 +1313,10 @@ public:
         ACTION(fileMenu, "&Exit", Exit, QKeySequence::Quit);
 
         QMenu * viewMenu = menuBar()->addMenu(tr("&View"));
-        ACTION(viewMenu, "&Unzoom", Unzoom, Qt::Key_U);
-        ACTION(viewMenu, "Zoom-&In", more, Qt::Key_Plus + Qt::KeypadModifier);
-        ACTION(viewMenu, "Zoom-&Out", less, Qt::Key_Minus + Qt::KeypadModifier);
-        ACTION(viewMenu, "X-Zoom-In", moreX, Qt::Key_X);
-        ACTION(viewMenu, "X-Zoom-Out", lessX, Qt::Key_X + Qt::SHIFT);
-        ACTION(viewMenu, "Y-Zoom-In", moreY, Qt::Key_Y);
-        ACTION(viewMenu, "Y-Zoom-Out", lessY, Qt::Key_Y + Qt::SHIFT);
+        ACTION(viewMenu, "X-Zoom-In", xzoomIn, Qt::Key_X);
+        ACTION(viewMenu, "X-Zoom-Out", xzoomOut, Qt::Key_X + Qt::SHIFT);
+        ACTION(viewMenu, "Y-Zoom-In", yzoomIn, Qt::Key_Y);
+        ACTION(viewMenu, "Y-Zoom-Out", yzoomOut, Qt::Key_Y + Qt::SHIFT);
         ACTION(viewMenu, "Left", left, Qt::Key_Left);
         ACTION(viewMenu, "Right", right, Qt::Key_Right);
         ACTION(viewMenu, "Up", up, Qt::Key_Up);
@@ -1435,11 +1353,11 @@ public:
     }
 };
 
-#include "main.moc"
-
 ////////////////////////////////////////////////////////////////////////////////
 // main()
 ////////////////////////////////////////////////////////////////////////////////
+
+#include "main.moc"
 
 int main(int argc, char * argv[])
 {
@@ -1467,6 +1385,112 @@ int main(int argc, char * argv[])
 
     win.show();
     return app.exec();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Testing
+////////////////////////////////////////////////////////////////////////////////
+
+TEST(DataFile, Parse)
+{
+    EXPECT_TRUE(DataFile("dummy 500 1 mV X", "").IsValid());
+    EXPECT_TRUE(DataFile("dummy 500 1.0 mV X", "").IsValid());
+    EXPECT_FALSE(DataFile("dummy 500 1 mV ", "").IsValid()); // label missing
+    EXPECT_FALSE(DataFile("dummy 500 D mV X", "").IsValid()); // divisor wrong
+    EXPECT_FALSE(DataFile("dummy 500.0 1 mV X", "").IsValid()); // sps wrong
+}
+
+inline bool IsEqual(double a, double b)
+{
+    if (std::fabs(a - b) < 0.00001) return true;
+    qDebug() << "IsEqual" << a << b;
+    return false;
+}
+
+TEST(UnitScale, xy)
+{
+    UnitScale x(25);
+    x.setPixelPerMillimeter(40, 10);
+    x.setPixel(420);
+    x.setData(0, 4);
+    EXPECT_TRUE(IsEqual(105.0, x.mmSize()));
+    EXPECT_TRUE(IsEqual(  1.0, x.zoomFactor()));
+    EXPECT_TRUE(IsEqual( 25.0, x.mmPerUnit()));
+    EXPECT_TRUE(IsEqual(  4.2, x.unitSize()));
+    EXPECT_TRUE(IsEqual( -0.1, x.min()));
+    EXPECT_TRUE(IsEqual(  4.1, x.max()));
+    EXPECT_TRUE(IsEqual( -0.1, x.FromPixel(0)));
+    EXPECT_TRUE(IsEqual(  2.0, x.FromPixel(210)));
+    EXPECT_TRUE(IsEqual(  4.1, x.FromPixel(420)));
+    EXPECT_TRUE(IsEqual(100.0, x.pixelPerUnit()));
+    EXPECT_EQ(  0, x.ToPixel(-0.1));
+    EXPECT_EQ(210, x.ToPixel(2.0));
+    EXPECT_EQ(420, x.ToPixel(4.1));
+
+    x.setData(0, 5);
+    EXPECT_TRUE(IsEqual( 0.5, x.zoomFactor()));
+    EXPECT_TRUE(IsEqual(12.5, x.mmPerUnit()));
+    EXPECT_TRUE(IsEqual( 8.4, x.unitSize()));
+    EXPECT_TRUE(IsEqual(-1.7, x.min()));
+    EXPECT_TRUE(IsEqual( 6.7, x.max()));
+
+    x.scroll(1.7);
+    EXPECT_TRUE(IsEqual(0.0, x.min()));
+    EXPECT_TRUE(IsEqual(8.4, x.max()));
+
+    x.setFocus(2.1);
+    x.zoomOut();
+    EXPECT_TRUE(IsEqual(-2.1, x.min()));
+    EXPECT_TRUE(IsEqual(14.7, x.max()));
+
+    x.zoomIn();
+    EXPECT_TRUE(IsEqual(0.0, x.min()));
+    EXPECT_TRUE(IsEqual(8.4, x.max()));
+
+    x.zoomIn();
+    EXPECT_TRUE(IsEqual(1.05, x.min()));
+    EXPECT_TRUE(IsEqual(5.25, x.max()));
+
+    UnitScale y(10);
+    y.setPixelPerMillimeter(5, 1);
+    y.setPixel(500);
+    y.setData(-1, 1);
+    EXPECT_TRUE(IsEqual(100, y.mmSize()));
+    EXPECT_TRUE(IsEqual(10, y.unitSize()));
+    EXPECT_TRUE(IsEqual(1, y.zoomFactor()));
+    EXPECT_TRUE(IsEqual(5, y.max()));
+    EXPECT_TRUE(IsEqual(-5, y.min()));
+    
+    y.setData(-1, 3);
+    EXPECT_TRUE(IsEqual(10, y.unitSize()));
+    EXPECT_TRUE(IsEqual(1, y.zoomFactor()));
+    EXPECT_TRUE(IsEqual(6, y.max()));
+    EXPECT_TRUE(IsEqual(-4, y.min()));
+    
+    y.setData(-6, 12);
+    EXPECT_TRUE(IsEqual(20, y.unitSize()));
+    EXPECT_TRUE(IsEqual(0.5, y.zoomFactor()));
+    EXPECT_TRUE(IsEqual(13, y.max()));
+    EXPECT_TRUE(IsEqual(-7, y.min()));
+
+    EXPECT_EQ(500, y.ToPixel(13));
+    EXPECT_EQ(250, y.ToPixel(3.0));
+    EXPECT_EQ(  0, y.ToPixel(-7));
+
+    Translate t(x, y);
+    t.setGain(0.5);
+    
+    EXPECT_EQ(  0, t.UnitToYPixel(13));
+    EXPECT_EQ(250, t.UnitToYPixel(3.0));
+    EXPECT_EQ(500, t.UnitToYPixel(-7));
+    
+    EXPECT_EQ(  0, t.LsbToYPixel(26));
+    EXPECT_EQ(250, t.LsbToYPixel( 6));
+    EXPECT_EQ(500, t.LsbToYPixel(-14));
+    
+    EXPECT_TRUE(IsEqual(13, t.YPixelToUnit(0)));
+    EXPECT_TRUE(IsEqual( 3, t.YPixelToUnit(250)));
+    EXPECT_TRUE(IsEqual(-7, t.YPixelToUnit(500)));
 }
 
 
