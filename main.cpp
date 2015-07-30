@@ -177,6 +177,7 @@ public:
         }
 
         mValues = result;
+        SetMinMax();
     }
 
     double At(MicroSecond us) const
@@ -201,7 +202,6 @@ private:
         mValues.reserve(QFileInfo(fullName).size() / sizeof(qint16));
         QDataStream stream(&read);
         stream.setByteOrder(mIsBigEndian ? QDataStream::BigEndian : QDataStream::LittleEndian);
-        bool isFirst = true;
 
         while (!stream.atEnd())
         {
@@ -222,12 +222,25 @@ private:
             }
 
             mValues.push_back(lsb);
-            if (isFirst || (mMin > lsb)) {mMin = lsb;}
-            if (isFirst || (mMax < lsb)) {mMax = lsb;}
-            isFirst = false;
         }
 
         read.close();
+        SetMinMax();
+    }
+
+    void SetMinMax()
+    {
+        if (mValues.size() < 1)
+        {
+            mMin = 0;
+            mMax = 0;
+        }
+        else
+        {
+            auto minmax = std::minmax_element(Values().begin(), Values().end());
+            mMin = *minmax.first;
+            mMax = *minmax.second;
+        }
     }
 
     void Parse()
@@ -1269,7 +1282,7 @@ private:
     const DataMain & mData;
     QStatusBar * mStatus;
     GuiMeasure * mMeasure;
-    GuiWave * mMeasuredWave;
+    GuiWave * mSelected;
     std::vector<GuiWave *> mChannels;
 private slots:
     void slotWaveSelected(GuiWave * sender)
@@ -1291,7 +1304,7 @@ private slots:
     {
         const QPoint focus = mMeasure->geometry().center();
         for (auto & chan:mChannels) {chan->setXFocus(focus.x());}
-        if (mMeasuredWave) {mMeasuredWave->setYFocus(focus.y());}
+        if (mSelected) {mSelected->setYFocus(focus.y());}
         updateStatus();
     }
 public:
@@ -1301,7 +1314,7 @@ public:
         mData(data),
         mStatus(parent->statusBar()),
         mMeasure(nullptr),
-        mMeasuredWave(nullptr),
+        mSelected(nullptr),
         mChannels()
     {
         QVBoxLayout * layout = new QVBoxLayout(this);
@@ -1320,18 +1333,18 @@ public:
 
     void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn(); }; updateStatus();}
     void xzoomOut() {for (auto & chan:mChannels) {chan->xzoomOut();}; updateStatus();}
-    void yzoomIn()  {for (auto & chan:mChannels) {chan->yzoomIn(); }; updateStatus();}
-    void yzoomOut() {for (auto & chan:mChannels) {chan->yzoomOut();}; updateStatus();}
     void left()     {for (auto & chan:mChannels) {chan->left();    }; updateStatus();}
     void right()    {for (auto & chan:mChannels) {chan->right();   }; updateStatus();}
-    void up()       {for (auto & chan:mChannels) {chan->up();      }; updateStatus();}
-    void down()     {for (auto & chan:mChannels) {chan->down();    }; updateStatus();}
+    void yzoomIn()  {if (mSelected) {mSelected->yzoomIn(); }; updateStatus();}
+    void yzoomOut() {if (mSelected) {mSelected->yzoomOut();}; updateStatus();}
+    void up()       {if (mSelected) {mSelected->up();      }; updateStatus();}
+    void down()     {if (mSelected) {mSelected->down();    }; updateStatus();}
 private:
     void updateStatus()
     {
-        if (mMeasuredWave && mMeasure)
+        if (mSelected && mMeasure)
         {
-            mStatus->showMessage(mMeasuredWave->status(*mMeasure));
+            mStatus->showMessage(mSelected->status(*mMeasure));
         }
         else
         {
@@ -1341,7 +1354,7 @@ private:
 
     void setMeasuredWave(GuiWave * wave)
     {
-        if ((mMeasuredWave == wave) || (wave == nullptr))
+        if ((mSelected == wave) || (wave == nullptr))
         {
             return;
         }
@@ -1365,17 +1378,17 @@ private:
         gui->show();
         connect(gui, SIGNAL(signalMoved()), this, SLOT(slotMeasureMoved()));
 
-        mMeasuredWave = wave;
+        mSelected = wave;
         mMeasure = gui;
     }
 
     void resizeEvent(QResizeEvent *) override
     {
-        if (mMeasure && mMeasuredWave)
+        if (mMeasure && mSelected)
         {
             QRect geo;
             geo.setSize(QSize(50, 50));
-            geo.moveCenter(mMeasuredWave->rect().center());
+            geo.moveCenter(mSelected->rect().center());
             mMeasure->setGeometry(geo);
             slotMeasureMoved();
         }
