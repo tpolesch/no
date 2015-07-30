@@ -946,6 +946,11 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
     for (auto & data:mData.Files())
     {
+        if (data.Values().size() < 2)
+        {
+            continue;
+        }
+
         mTranslate.setData(data);
         mTranslate.debug(rect);
 
@@ -967,11 +972,13 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
         
     for (int xpx = rect.left(); xpx < xpxEnd; ++xpx)
     {
-        const int indexFirst = mTranslate.XPixelToSampleIndex(xpx);
-        if (indexFirst < 1) continue;
+        int indexFirst = mTranslate.XPixelToSampleIndex(xpx);
+        if (indexFirst < 1) indexFirst = 1;
+        if (indexFirst > indexEnd) return;
 
-        const int indexLast = mTranslate.XPixelToSampleIndex(xpx + 1);
-        if (indexLast > indexEnd) return;
+        int indexLast = mTranslate.XPixelToSampleIndex(xpx + 1);
+        if (indexLast > indexEnd) indexLast = indexEnd;
+        if (indexLast < 1) continue;
 
         // 1st line per xpx:
         // - from last sample in previous xpx
@@ -1377,7 +1384,8 @@ private:
     void paintEvent(QPaintEvent * e) override
     {
         QPainter painter(this);
-        painter.fillRect(e->rect(), Qt::gray);
+        painter.fillRect(e->rect(), QWidget::palette().color(
+                    QWidget::backgroundRole()));
     }
 };
 
