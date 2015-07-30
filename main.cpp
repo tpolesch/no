@@ -602,6 +602,7 @@ public:
 
     void setFocus(double unit)
     {
+        qDebug() << "setFocus:" << unit << "min:" << min() << "max:" << max();
         mFocus = unit;
     }
 
@@ -697,6 +698,7 @@ public:
         return ((mZoom < 0) ? (1.0 / (1 << (-mZoom))) : (1 << mZoom));
     }
 
+    double focus() const {return mFocus;}
     double min() const {return mMin;}
     double max() const {return min() + unitSize();}
 };
@@ -717,6 +719,19 @@ public:
         mDelay(0),
         mSamplePeriod(0)
     {
+    }
+
+    void debug(const QRect & rect)
+    {
+        int rl = rect.left();
+        int rr = rect.right();
+        int il = XPixelToSampleIndex(rl);
+        int ir = XPixelToSampleIndex(rr);
+        qDebug() << "Translate px:" << rl << rr
+            << "index:" << il << ir
+            << "time:" << mX.min() << mX.max()
+            << "focus:" << mX.focus() 
+            << "spp:" << samplesPerPixel();
     }
 
     void setFile(const DataFile & data)
@@ -741,15 +756,20 @@ private:
     {
         return static_cast<MicroSecond>(1000000.0 * mX.FromPixel(xpx));
     }
+
+    int MicroSecondToXPixel(MicroSecond us) const
+    {
+        return mX.ToPixel(static_cast<double>(us) / 1000000.0);
+    }
 public:
     int XPixelToSampleIndex(int xpx) const
     {
         return (XPixelToMicroSecond(xpx) - mDelay) / mSamplePeriod;
     }
 
-    int MicroSecondToXPixel(MicroSecond us) const
+    int SampleIndexToXPixel(int idx) const
     {
-        return mX.ToPixel(static_cast<double>(us) / 1000000.0);
+        return MicroSecondToXPixel(idx * mSamplePeriod + mDelay);
     }
 
     MilliVolt YPixelToUnit(int ypx) const
@@ -880,7 +900,6 @@ private:
     const DataChannel & mData;
     Translate mTranslate;
     MeasurePerformance mMeasurePerformance;
-    double mSamplesPerPixel;
     const QPen mPointPen;
     QPen mLinePen;
 };
@@ -966,7 +985,6 @@ DrawChannel::DrawChannel(const DataChannel & data,
     mData(data),
     mTranslate(timeScale, valueScale),
     mMeasurePerformance("DrawChannel"),
-    mSamplesPerPixel(0),
     mPointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mLinePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)
 {
@@ -986,9 +1004,9 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
     for (auto & file:mData.Files())
     {
         mTranslate.setFile(file);
-        mSamplesPerPixel = mTranslate.samplesPerPixel();
+        mTranslate.debug(rect);
 
-        if (mSamplesPerPixel > 5)
+        if (mTranslate.samplesPerPixel() > 5)
         {
             DrawPixelWise(painter, rect, file);
         }
@@ -1033,7 +1051,6 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
 
 void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
-    const MicroSecond samplePeriod = data.SamplePeriod();
     const int indexFirst = mTranslate.XPixelToSampleIndex(rect.left());
     const int indexLast = mTranslate.XPixelToSampleIndex(rect.right() + 2);
     const int indexBegin = (indexFirst < 0) ? 0 : indexFirst;
@@ -1041,14 +1058,14 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
     const int indexEnd = (indexLast > indexMax) ? indexMax : indexLast;
     if ((indexEnd - indexBegin) < 2) return;
 
-    const bool drawPoints = mSamplesPerPixel < 0.5;
-    auto now  = data.Values().begin() + indexBegin;
+    const bool drawPoints = mTranslate.samplesPerPixel() < 0.5;
+    auto indexNow = indexBegin;
+    auto now  = data.Values().begin() + indexNow;
     auto end  = data.Values().begin() + indexEnd;
     auto yold = mTranslate.LsbToYPixel(*now);
-    auto time = indexBegin * samplePeriod;
-    auto xold = mTranslate.MicroSecondToXPixel(time);
+    auto xold = mTranslate.SampleIndexToXPixel(indexNow);
     ++now;
-    time += samplePeriod;
+    ++indexNow;
 
     if (drawPoints)
     {
@@ -1061,9 +1078,9 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
     while (now < end)
     {
         auto ynow = mTranslate.LsbToYPixel(*now);
-        auto xnow = mTranslate.MicroSecondToXPixel(time);
+        auto xnow = mTranslate.SampleIndexToXPixel(indexNow);
         ++now;
-        time += samplePeriod;
+        ++indexNow;
         painter.drawLine(xold, yold, xnow, ynow);
         xold = xnow;
         yold = ynow;
