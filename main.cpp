@@ -866,6 +866,21 @@ private:
         emit signalMoved();
     }
 
+    void paintEvent(QPaintEvent *) override
+    {
+        // draw red crosshairs to mark the focus point
+        QPen pen(Qt::red, 1, Qt::DotLine, Qt::RoundCap, Qt::RoundJoin);
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(pen);
+        const int w = width();
+        const int h = height();
+        const int x = w / 2;
+        const int y = h / 2;
+        painter.drawLine(0, y, w, y);
+        painter.drawLine(x, 0, x, h);
+    }
+
     QPoint mLastPos;
 };
 
@@ -1118,9 +1133,15 @@ public:
         mValueScale.setData(data.Min(), data.Max());
     }
 
-    void setTimeFocus(int xpx)
+    void setXFocus(int xpx)
     {
         mTimeScale.setFocusPixel(xpx);
+    }
+
+    void setYFocus(int ypx)
+    {
+        const Translate t(mTimeScale, mValueScale);
+        mValueScale.setFocus(t.YPixelToUnit(ypx));
     }
 
     void xzoomIn()  {mTimeScale.zoomIn(); update();}
@@ -1146,8 +1167,6 @@ private:
 
     void mousePressEvent(QMouseEvent * evt) override
     {
-        const Translate t(mTimeScale, mValueScale);
-        mValueScale.setFocus(t.YPixelToUnit(evt->pos().y()));
         emit signalClicked(this, evt);
     }
 
@@ -1211,8 +1230,9 @@ private slots:
 
     void slotMeasureMoved()
     {
-        const int xpx = mMeasure->geometry().center().x();
-        for (auto & chan:mChannels) {chan->wave().setTimeFocus(xpx);}
+        const QPoint focus = mMeasure->geometry().center();
+        for (auto & chan:mChannels) {chan->wave().setXFocus(focus.x());}
+        if (mMeasuredWave) {mMeasuredWave->setYFocus(focus.y());}
     }
 public:
     GuiMain(QWidget * parent, const GuiSetup & setup, const DataMain & data):
