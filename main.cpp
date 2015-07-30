@@ -937,6 +937,7 @@ void DrawChannel::Draw(QWidget & parent, const QRect & rect)
     QPainter painter(&parent);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(mLinePen);
+    painter.fillRect(rect, Qt::white);
 
     DrawSamples(painter, rect);
 }
@@ -1231,32 +1232,6 @@ private:
     }
 };
 
-class GuiChannel : public QWidget
-{
-private:
-    GuiWave * mWave;
-public:
-    GuiChannel(QWidget * parent, const DataChannel & data, double seconds):
-        QWidget(parent),
-        mWave(new GuiWave(this, data, seconds))
-    {
-        QVBoxLayout * layout = new QVBoxLayout(this);
-        layout->addWidget(mWave);
-        setLayout(layout);
-    }
-
-    void xzoomIn()  {wave().xzoomIn();}
-    void xzoomOut() {wave().xzoomOut();}
-    void yzoomIn()  {wave().yzoomIn();}
-    void yzoomOut() {wave().yzoomOut();}
-    void left()     {wave().left();}
-    void right()    {wave().right();}
-    void down()     {wave().down();}
-    void up()       {wave().up();}
-
-    GuiWave & wave() {return *mWave;}
-};
-
 class GuiMain : public QWidget
 {
     Q_OBJECT
@@ -1266,7 +1241,7 @@ private:
     QStatusBar * mStatus;
     GuiMeasure * mMeasure;
     GuiWave * mMeasuredWave;
-    std::vector<GuiChannel *> mChannels;
+    std::vector<GuiWave *> mChannels;
 private slots:
     void slotWaveSelected(GuiWave * sender)
     {
@@ -1286,7 +1261,7 @@ private slots:
     void slotMeasureMoved()
     {
         const QPoint focus = mMeasure->geometry().center();
-        for (auto & chan:mChannels) {chan->wave().setXFocus(focus.x());}
+        for (auto & chan:mChannels) {chan->setXFocus(focus.x());}
         if (mMeasuredWave) {mMeasuredWave->setYFocus(focus.y());}
         updateStatus();
     }
@@ -1303,12 +1278,12 @@ public:
         QVBoxLayout * layout = new QVBoxLayout(this);
         for (auto & chan:mData.Channels())
         {
-            GuiChannel * gui = new GuiChannel(this, chan, data.Seconds());
+            GuiWave * gui = new GuiWave(this, chan, data.Seconds());
             layout->addWidget(gui);
             mChannels.push_back(gui);
-            connect(&gui->wave(), SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
+            connect(gui, SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
                     this, SLOT(slotWaveClicked(GuiWave *, QMouseEvent *)));
-            connect(&gui->wave(), SIGNAL(signalSelected(GuiWave *)),
+            connect(gui, SIGNAL(signalSelected(GuiWave *)),
                     this, SLOT(slotWaveSelected(GuiWave *)));
         }
         setLayout(layout);
@@ -1375,6 +1350,12 @@ private:
             mMeasure->setGeometry(geo);
             slotMeasureMoved();
         }
+    }
+
+    void paintEvent(QPaintEvent * e) override
+    {
+        QPainter painter(this);
+        painter.fillRect(e->rect(), Qt::gray);
     }
 };
 
