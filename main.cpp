@@ -167,6 +167,11 @@ public:
         return mUnit;
     }
 
+    const QString & label() const
+    {
+        return mLabel;
+    }
+
     bool isOperator(const QString & arg) const
     {
         return (mOper == arg);
@@ -303,6 +308,12 @@ private:
         }
     }
 
+    QString removeQuotes(const QString & str) const
+    {
+        QRegularExpressionMatch match = QRegularExpression("^\"(.+)\"$").match(str);
+        return match.hasMatch() ? match.captured(1) : str;
+    }
+
     void parseTxt()
     {
         if (!QRegularExpression("^[>+-]").match(mTxt).hasMatch())
@@ -324,7 +335,7 @@ private:
             if (valid) {sps = match.captured(3).toInt(&valid);}
             if (valid) {div = match.captured(4).toDouble(&valid);}
             mUnit = match.captured(5);
-            mLabel = match.captured(6);
+            mLabel = removeQuotes(match.captured(6));
             optPos = match.capturedEnd(0);
 
             if (sps == 0)
@@ -815,6 +826,7 @@ public:
             const UnitScale & timeScale,
             const UnitScale & valueScale);
 private:
+    void DrawDecorations(const QString & label);
     void DrawSampleWise(const DataFile & data);
     void DrawPixelWise(const DataFile & data);
     void DrawAnnotations(const DataFile & data, bool hasSamples);
@@ -938,11 +950,15 @@ DrawChannel::DrawChannel(QWidget & parent,
     mPainter.setPen(mLinePen);
     mPainter.setFont(font);
     mPainter.fillRect(mRect, Qt::white);
+    QString label;
 
     for (auto & data:chan.files())
     {
+        label += data.label() + " " ;
         mTranslate.setData(data);
         mTranslate.debug(rect);
+
+        DrawAnnotations(data, chan.hasSamples());
 
         if (data.samples().size() > 1)
         {
@@ -955,9 +971,17 @@ DrawChannel::DrawChannel(QWidget & parent,
                 DrawSampleWise(data);
             }
         }
-
-        DrawAnnotations(data, chan.hasSamples());
     }
+
+    DrawDecorations(label);
+}
+
+void DrawChannel::DrawDecorations(const QString & label)
+{
+    const int flags = Qt::TextSingleLine|Qt::TextDontClip;
+    const QRect parent(mParent.rect());
+    const QRect bounds = mPainter.boundingRect(parent, flags, label);
+    mPainter.drawText(bounds.bottomLeft(), label);
 }
 
 void DrawChannel::DrawAnnotations(const DataFile & data, bool hasSamples)
