@@ -45,16 +45,35 @@ public:
 // DataFile
 ////////////////////////////////////////////////////////////////////////////////
 
+class Annotation
+{
+private:
+    const Second mSec;
+    const QString mTxt;
+public:
+    explicit Annotation(double msec, const QString & txt):
+        mSec(msec / 1000.0),
+        mTxt(txt)
+    {
+    }
+
+    Second sec() const {return mSec;}
+    const QString & txt() const {return mTxt;}
+};
+
 class DataFile
 {
 private:
     std::vector<int> mSamples;
+    std::vector<Annotation> mAnnotations;
     Second mDelay;
     double mSps;
     double mGain;
     QString mTxt;
-    QString mOperator;
-    QString mFileName;
+    QString mPath;
+    QString mData;
+    QString mAnno;
+    QString mOper;
     QString mUnit;
     QString mLabel;
     int mErrors;
@@ -74,10 +93,12 @@ public:
         mSps(0.0),
         mGain(1.0),
         mTxt(txt),
-        mOperator(""),
-        mFileName(""),
-        mUnit(""),
-        mLabel(""),
+        mPath(path),
+        mData(),
+        mAnno(),
+        mOper(),
+        mUnit(),
+        mLabel(),
         mErrors(0),
         mSampleMask(0xffff),
         mSampleOffset(0),
@@ -86,10 +107,9 @@ public:
         mIsSigned(true),
         mIsBigEndian(true)
     {
-        parse();
-        if (mFileName == "dummy") return;
-        if (mFileName.size() < 1) return;
-        setSamples(path);
+        parseTxt();
+        readData();
+        readAnno();
     }
 
     double min() const
@@ -127,6 +147,11 @@ public:
         return mSamples;
     }
 
+    const std::vector<Annotation> & annotations() const
+    {
+        return mAnnotations;
+    }
+
     bool valid() const
     {
         return (mErrors == 0);
@@ -144,7 +169,7 @@ public:
 
     bool isOperator(const QString & arg) const
     {
-        return (mOperator == arg);
+        return (mOper == arg);
     }
 
     void minus(const DataFile & other)
@@ -185,9 +210,46 @@ private:
             : NAN;
     }
 
-    void setSamples(const QString & path)
+    void readAnno()
     {
-        const QString fullName = path + mFileName;
+        if (mAnno.size() < 1) return;
+        const QString name = mPath + mAnno;
+        QFile read(name);
+
+        if (!read.open(QIODevice::ReadOnly))
+        {
+            error();
+            return;
+        }
+
+        QTextStream stream(&read);
+        QRegularExpression re("^\\s*(\\S+)\\s+(.+)\\s*$");
+
+        while (!stream.atEnd())
+        {
+            const QString line = stream.readLine();
+            QRegularExpressionMatch match = re.match(line);
+
+            if (match.hasMatch())
+            {
+                bool valid = true;
+                const Annotation anno(match.captured(1).toDouble(&valid), match.captured(2));
+                if (valid) {mAnnotations.push_back(anno);}
+            }
+            else
+            {
+                qDebug() << "anno error:" << line;
+            }
+        }
+
+        read.close();
+    }
+
+    void readData()
+    {
+        if (mData == "dummy") return;
+        if (mData.size() < 1) return;
+        const QString fullName = mPath + mData;
         QFile read(fullName);
 
         if (!read.open(QIODevice::ReadOnly))
@@ -241,7 +303,7 @@ private:
         }
     }
 
-    void parse()
+    void parseTxt()
     {
         if (!QRegularExpression("^[>+-]").match(mTxt).hasMatch())
         {
@@ -257,8 +319,8 @@ private:
         if (match.hasMatch())
         {
             int sps = 0;
-            mOperator = match.captured(1);
-            mFileName = match.captured(2);
+            mOper = match.captured(1);
+            mData = match.captured(2);
             if (valid) {sps = match.captured(3).toInt(&valid);}
             if (valid) {div = match.captured(4).toDouble(&valid);}
             mUnit = match.captured(5);
@@ -281,10 +343,11 @@ private:
 
         int delay = 0;
         QString dst;
+        if (find(dst, optPos, "anno_file")) {mAnno = dst;}
         if (valid && find(dst, optPos, "s-mask")) {mSampleMask = dst.toInt(&valid, 0);}
         if (valid && find(dst, optPos, "offset")) {mSampleOffset = dst.toInt(&valid, 0);}
-        if (valid && find(dst, optPos, "delay"))  {delay = dst.toInt(&valid, 0);}
-        if (valid && find(dst, optPos, "gain"))   {mGain = dst.toDouble(&valid) / div;}
+        if (valid && find(dst, optPos, "delay")) {delay = dst.toInt(&valid, 0);}
+        if (valid && find(dst, optPos, "gain")) {mGain = dst.toDouble(&valid) / div;}
         if (!valid) {error();}
         mDelay = static_cast<double>(delay) / 1000;
 
@@ -379,6 +442,16 @@ public:
             if (mMax < file.max()) {mMax = file.max();}
             if (mDuration < file.duration()) {mDuration = file.duration();}
         }
+    }
+
+    bool hasSamples() const
+    {
+        for (auto & file:files())
+        {
+            if (file.samples().size() > 0) return true;
+        }
+
+        return false;
     }
     
     const std::vector<DataFile> & files() const
@@ -705,7 +778,12 @@ public:
 
     int sampleIndexToXpx(double idx) const
     {
-        return mX.toPixel(idx / mSps + mDelay);
+        return secondToXpx(idx / mSps + mDelay);
+    }
+
+    int secondToXpx(Second sec) const
+    {
+        return mX.toPixel(sec);
     }
 
     double ypxToUnit(int ypx) const
@@ -731,18 +809,20 @@ public:
 class DrawChannel
 {
 public:
-    explicit DrawChannel(const DataChannel & data,
+    explicit DrawChannel(QWidget & parent,
+            const QRect & rect,
+            const DataChannel & data,
             const UnitScale & timeScale,
             const UnitScale & valueScale);
-    void Draw(QWidget & parent, const QRect & rect);
 private:
-    void DrawAnnotations(QPainter & painter, const QRect & rect);
-    void DrawSamples(QPainter & painter, const QRect & rect);
-    void DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data);
-    void DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data);
+    void DrawSampleWise(const DataFile & data);
+    void DrawPixelWise(const DataFile & data);
+    void DrawAnnotations(const DataFile & data, bool hasSamples);
 
-    const DataChannel & mData;
+    QWidget & mParent;
+    const QRect & mRect;
     Translate mTranslate;
+    QPainter mPainter;
     MeasurePerformance mMeasurePerformance;
     const QPen mPointPen;
     QPen mLinePen;
@@ -838,66 +918,87 @@ private:
 // class DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
 
-DrawChannel::DrawChannel(const DataChannel & data,
-        const UnitScale & timeScale,
-        const UnitScale & valueScale):
-    mData(data),
+DrawChannel::DrawChannel(QWidget & parent,
+            const QRect & rect,
+            const DataChannel & chan,
+            const UnitScale & timeScale,
+            const UnitScale & valueScale):
+    mParent(parent),
+    mRect(rect),
     mTranslate(timeScale, valueScale),
+    mPainter(&parent),
     mMeasurePerformance("DrawChannel"),
     mPointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mLinePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)
 {
-}
-
-void DrawChannel::Draw(QWidget & parent, const QRect & rect)
-{
     QFont font = parent.font();
     if (font.pointSize() > 8) {font.setPointSize(8);}
 
-    QPainter painter(&parent);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(mLinePen);
-    painter.setFont(font);
-    painter.fillRect(rect, Qt::white);
+    mPainter.setRenderHint(QPainter::Antialiasing, true);
+    mPainter.setPen(mLinePen);
+    mPainter.setFont(font);
+    mPainter.fillRect(mRect, Qt::white);
 
-    DrawSamples(painter, rect);
-    DrawAnnotations(painter, rect);
-}
-
-void DrawChannel::DrawAnnotations(QPainter & painter, const QRect & )
-{
-    painter.drawText(20, 10, "Test");
-}
-
-void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
-{
-    for (auto & data:mData.files())
+    for (auto & data:chan.files())
     {
-        if (data.samples().size() < 2)
-        {
-            continue;
-        }
-
         mTranslate.setData(data);
         mTranslate.debug(rect);
 
-        if (mTranslate.samplesPerPixel() > 5)
+        if (data.samples().size() > 1)
         {
-            DrawPixelWise(painter, rect, data);
+            if (mTranslate.samplesPerPixel() > 5)
+            {
+                DrawPixelWise(data);
+            }
+            else
+            {
+                DrawSampleWise(data);
+            }
         }
-        else
-        {
-            DrawSampleWise(painter, rect, data);
-        }
+
+        DrawAnnotations(data, chan.hasSamples());
     }
 }
 
-void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data)
+void DrawChannel::DrawAnnotations(const DataFile & data, bool hasSamples)
+{
+    const int flags = Qt::TextSingleLine|Qt::TextDontClip;
+    const int requestLeft = mRect.left();
+    const int requestRight = mRect.right();
+    const int max = INT_MAX;
+    QRect lastBounds(INT_MIN, 0, 0, 0);
+
+    for (auto & anno:data.annotations())
+    {
+        const int textLeft = mTranslate.secondToXpx(anno.sec());
+        if (textLeft > requestRight) return;
+        QRect bounds(textLeft, lastBounds.top(), max, max);
+        bounds = mPainter.boundingRect(bounds, flags, anno.txt());
+        if (bounds.right() < requestLeft) continue;
+
+        const bool isOverlapping = bounds.left() < lastBounds.right();
+
+        if (isOverlapping && !hasSamples)
+        {
+            bounds.moveTop(lastBounds.bottom());
+
+            if (bounds.bottom() > mParent.height())
+            {
+                bounds.moveTop(0);
+            }
+        }
+
+        mPainter.drawText(bounds.bottomLeft(), anno.txt());
+        lastBounds = bounds;
+    }
+}
+
+void DrawChannel::DrawPixelWise(const DataFile & data)
 {
     const int indexEnd = static_cast<int>(data.samples().size()) - 1;
-    const int xpxEnd = rect.right() + 2;
+    const int xpxEnd = mRect.right() + 2;
         
-    for (int xpx = rect.left(); xpx < xpxEnd; ++xpx)
+    for (int xpx = mRect.left(); xpx < xpxEnd; ++xpx)
     {
         int indexFirst = mTranslate.xpxToSampleIndex(xpx);
         if (indexFirst < 1) indexFirst = 1;
@@ -913,7 +1014,7 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
         auto itFirst = data.samples().begin() + indexFirst;
         auto first = mTranslate.lsbToYpx(*itFirst);
         auto last = mTranslate.lsbToYpx(*(itFirst - 1));
-        painter.drawLine(xpx - 1, last, xpx, first);
+        mPainter.drawLine(xpx - 1, last, xpx, first);
 
         // 2nd line per xpx:
         // - from min sample in current xpx
@@ -922,14 +1023,14 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
         auto minmax = std::minmax_element(itFirst, itLast);
         auto min = mTranslate.lsbToYpx(*minmax.first);
         auto max = mTranslate.lsbToYpx(*minmax.second);
-        painter.drawLine(xpx, min, xpx, max);
+        mPainter.drawLine(xpx, min, xpx, max);
     }
 }
 
-void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data)
+void DrawChannel::DrawSampleWise(const DataFile & data)
 {
-    const int indexFirst = mTranslate.xpxToSampleIndex(rect.left());
-    const int indexLast = mTranslate.xpxToSampleIndex(rect.right() + 2);
+    const int indexFirst = mTranslate.xpxToSampleIndex(mRect.left());
+    const int indexLast = mTranslate.xpxToSampleIndex(mRect.right() + 2);
     const int indexBegin = (indexFirst < 0) ? 0 : indexFirst;
     const int indexMax = static_cast<int>(data.samples().size());
     const int indexEnd = (indexLast > indexMax) ? indexMax : indexLast;
@@ -946,10 +1047,10 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
 
     if (drawPoints)
     {
-        painter.setPen(mPointPen);
-        painter.drawPoint(xold, yold);
+        mPainter.setPen(mPointPen);
+        mPainter.drawPoint(xold, yold);
         mLinePen.setColor(Qt::gray);
-        painter.setPen(mLinePen);
+        mPainter.setPen(mLinePen);
     }
 
     while (now < end)
@@ -958,15 +1059,15 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
         auto xnow = mTranslate.sampleIndexToXpx(indexNow);
         ++now;
         ++indexNow;
-        painter.drawLine(xold, yold, xnow, ynow);
+        mPainter.drawLine(xold, yold, xnow, ynow);
         xold = xnow;
         yold = ynow;
 
         if (drawPoints)
         {
-            painter.setPen(mPointPen);
-            painter.drawPoint(xnow, ynow);
-            painter.setPen(mLinePen);
+            mPainter.setPen(mPointPen);
+            mPainter.drawPoint(xnow, ynow);
+            mPainter.setPen(mLinePen);
         }
     }
 }
@@ -1166,8 +1267,7 @@ private:
 
     void paintEvent(QPaintEvent * e) override
     {
-        DrawChannel draw(mData, mTimeScale, mValueScale);
-        draw.Draw(*this, e->rect());
+        DrawChannel(*this, e->rect(), mData, mTimeScale, mValueScale);
     }
 
     void mousePressEvent(QMouseEvent * evt) override
