@@ -12,7 +12,7 @@ DEFINES += QT_NO_DEBUG_OUTPUT
 }
 
 QT += widgets
-CXXFLAGS += -Wall
+QMAKE_CXXFLAGS += -Wall -Wextra -pedantic
 SOURCES += main.cpp
 INCLUDEPATH += /home/m5/sw/utility/CurrentWork/include
 QMAKE_POST_LINK = "./$$TARGET --test"

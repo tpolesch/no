@@ -5,13 +5,7 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 
-typedef int64_t IntType;
-typedef IntType MicroSecond;
-typedef double Seconds;
-inline static MicroSecond FromMilliSec(IntType ms)
-{
-    return ms * 1000ll;
-}
+typedef double Second;
 
 ////////////////////////////////////////////////////////////////////////////////
 // MeasurePerformance
@@ -54,150 +48,156 @@ public:
 class DataFile
 {
 private:
-    MicroSecond mSignalDelay;
-    MicroSecond mSamplePeriod;
-    double mSampleGain;
-    int mErrors;
-    int mSampleMask;
-    int mSampleOffset;
-    int mMin;
-    int mMax;
-    std::vector<int> mValues;
-    bool mIsSigned;
-    bool mIsBigEndian;
+    std::vector<int> mSamples;
+    Second mDelay;
+    double mSps;
+    double mGain;
     QString mTxt;
     QString mOperator;
     QString mFileName;
     QString mUnit;
     QString mLabel;
+    int mErrors;
+    int mSampleMask;
+    int mSampleOffset;
+    int mSampleMin;
+    int mSampleMax;
+    bool mIsSigned;
+    bool mIsBigEndian;
 public:
     DataFile & operator=(const DataFile &) = default;
     DataFile(const DataFile &) = default;
     DataFile() = delete;
     explicit DataFile(const QString & txt, const QString & path):
-        mSignalDelay(0),
-        mSamplePeriod(0),
-        mSampleGain(1.0),
-        mErrors(0),
-        mSampleMask(0xffff),
-        mSampleOffset(0),
-        mMin(0),
-        mMax(0),
-        mValues(),
-        mIsSigned(true),
-        mIsBigEndian(true),
+        mSamples(),
+        mDelay(0.0),
+        mSps(0.0),
+        mGain(1.0),
         mTxt(txt),
         mOperator(""),
         mFileName(""),
         mUnit(""),
-        mLabel("")
+        mLabel(""),
+        mErrors(0),
+        mSampleMask(0xffff),
+        mSampleOffset(0),
+        mSampleMin(0),
+        mSampleMax(0),
+        mIsSigned(true),
+        mIsBigEndian(true)
     {
-        Parse();
+        parse();
         if (mFileName == "dummy") return;
         if (mFileName.size() < 1) return;
-        SetSamples(path);
+        setSamples(path);
     }
 
-    double Min() const
+    double min() const
     {
-        return SampleGain() * mMin;
+        return gain() * mSampleMin;
     }
     
-    double Max() const
+    double max() const
     {
-        return SampleGain() * mMax;
+        return gain() * mSampleMax;
     }
     
-    double SampleGain() const
+    double gain() const
     {
-        return mSampleGain;
+        return mGain;
     }
 
-    MicroSecond SamplePeriod() const
+    double sps() const
     {
-        return mSamplePeriod;
+        return mSps;
     }
 
-    MicroSecond SignalDelay() const
+    Second delay() const
     {
-        return mSignalDelay;
+        return mDelay;
     }
 
-    MicroSecond Duration() const
+    Second duration() const
     {
-        return mSignalDelay + SamplePeriod() * mValues.size();
-    }
-    
-    const std::vector<int> & Values() const
-    {
-        return mValues;
+        return delay() + static_cast<double>(mSamples.size()) / sps();
     }
 
-    bool IsValid() const
+    const std::vector<int> & samples() const
+    {
+        return mSamples;
+    }
+
+    bool valid() const
     {
         return (mErrors == 0);
     }
 
-    const QString & Txt() const
+    const QString & txt() const
     {
         return mTxt;
     }
 
-    const QString & Unit() const
+    const QString & unit() const
     {
         return mUnit;
     }
 
-    bool IsOperator(const QString & arg) const
+    bool isOperator(const QString & arg) const
     {
         return (mOperator == arg);
     }
 
-    void Minus(const DataFile & other)
+    void minus(const DataFile & other)
     {
         std::vector<int> result;
-        mSignalDelay = 0;
+        mDelay = 0;
+        Second time = 0;
+        size_t index = 0;
 
-        for (MicroSecond us = 0; us < Duration(); us += SamplePeriod())
+        while (time < duration())
         {
-            const double a = At(us);
-            const double b = other.At(us);
+            const double a = at(time);
+            const double b = other.at(time);
+
+            ++index;
+            time = static_cast<Second>(index) / sps();
 
             if (isnan(a) || (isnan(b)))
             {
                 if (result.size() > 0) {break;}
-                mSignalDelay = us;
+                mDelay = time;
                 continue;
             }
 
-            const int lsb = static_cast<int>((a - b) / SampleGain());
+            const int lsb = static_cast<int>((a - b) / gain());
             result.push_back(lsb);
         }
 
-        mValues = result;
-        SetMinMax();
-    }
-
-    double At(MicroSecond us) const
-    {
-        const int index = (us - mSignalDelay) / SamplePeriod();
-        return ((index >= 0) && (index < static_cast<int>(mValues.size())))
-            ? (mSampleGain * mValues[index])
-            : NAN;
+        mSamples = result;
+        updateMinMax();
     }
 private:
-    void SetSamples(const QString & path)
+    double at(Second sec) const
+    {
+        const size_t index = static_cast<size_t>((sec - delay()) * sps());
+        return (index < samples().size())
+            ? (gain() * samples()[index])
+            : NAN;
+    }
+
+    void setSamples(const QString & path)
     {
         const QString fullName = path + mFileName;
         QFile read(fullName);
 
         if (!read.open(QIODevice::ReadOnly))
         {
-            AddError();
+            error();
             return;
         }
 
-        mValues.reserve(QFileInfo(fullName).size() / sizeof(qint16));
+        const size_t size = static_cast<size_t>(QFileInfo(fullName).size());
+        mSamples.reserve(size / sizeof(qint16));
         QDataStream stream(&read);
         stream.setByteOrder(mIsBigEndian ? QDataStream::BigEndian : QDataStream::LittleEndian);
 
@@ -219,29 +219,29 @@ private:
                 lsb = static_cast<int>(sample & mask) - mSampleOffset;
             }
 
-            mValues.push_back(lsb);
+            mSamples.push_back(lsb);
         }
 
         read.close();
-        SetMinMax();
+        updateMinMax();
     }
 
-    void SetMinMax()
+    void updateMinMax()
     {
-        if (mValues.size() < 1)
+        if (samples().size() < 1)
         {
-            mMin = 0;
-            mMax = 0;
+            mSampleMin = 0;
+            mSampleMax = 0;
         }
         else
         {
-            auto minmax = std::minmax_element(Values().begin(), Values().end());
-            mMin = *minmax.first;
-            mMax = *minmax.second;
+            auto minmax = std::minmax_element(samples().begin(), samples().end());
+            mSampleMin = *minmax.first;
+            mSampleMax = *minmax.second;
         }
     }
 
-    void Parse()
+    void parse()
     {
         if (!QRegularExpression("^[>+-]").match(mTxt).hasMatch())
         {
@@ -250,7 +250,7 @@ private:
 
         double div = 1.0;
         int optPos = -1;
-        bool isValid = true;
+        bool valid = true;
         QRegularExpression re("^([>+-])\\s*(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s*");
         QRegularExpressionMatch match = re.match(mTxt);
 
@@ -259,32 +259,34 @@ private:
             int sps = 0;
             mOperator = match.captured(1);
             mFileName = match.captured(2);
-            if (isValid) {sps = match.captured(3).toInt(&isValid);}
-            if (isValid) {div = match.captured(4).toDouble(&isValid);}
+            if (valid) {sps = match.captured(3).toInt(&valid);}
+            if (valid) {div = match.captured(4).toDouble(&valid);}
             mUnit = match.captured(5);
             mLabel = match.captured(6);
             optPos = match.capturedEnd(0);
 
             if (sps == 0)
             {
-                AddError();
+                error();
                 return;
             }
 
-            mSamplePeriod = FromMilliSec(1000) / sps;
+            mSps = sps;
         }
         else
         {
-            AddError();
+            error();
             return;
         }
 
+        int delay = 0;
         QString dst;
-        if (isValid && Find(dst, optPos, "s-mask")) {mSampleMask   = dst.toInt(&isValid, 0);}
-        if (isValid && Find(dst, optPos, "offset")) {mSampleOffset = dst.toInt(&isValid, 0);}
-        if (isValid && Find(dst, optPos, "delay"))  {mSignalDelay  = FromMilliSec(dst.toInt(&isValid, 0));}
-        if (isValid && Find(dst, optPos, "gain"))   {mSampleGain   = dst.toDouble(&isValid) / div;}
-        if (!isValid) {AddError();}
+        if (valid && find(dst, optPos, "s-mask")) {mSampleMask = dst.toInt(&valid, 0);}
+        if (valid && find(dst, optPos, "offset")) {mSampleOffset = dst.toInt(&valid, 0);}
+        if (valid && find(dst, optPos, "delay"))  {delay = dst.toInt(&valid, 0);}
+        if (valid && find(dst, optPos, "gain"))   {mGain = dst.toDouble(&valid) / div;}
+        if (!valid) {error();}
+        mDelay = static_cast<double>(delay) / 1000;
 
         if (mSampleMask == 0x3fff)
         {
@@ -294,24 +296,24 @@ private:
         }
 
         // Hint: Avoid these keywords. They describe only a part of the data.
-        if (Contains(optPos, "swab"))  {mIsBigEndian = false;}
-        if (Contains(optPos, "u16"))   {mIsSigned = false;}
-        if (Contains(optPos, "i16"))   {mIsSigned = true;}
+        if (contains(optPos, "swab"))  {mIsBigEndian = false;}
+        if (contains(optPos, "u16"))   {mIsSigned = false;}
+        if (contains(optPos, "i16"))   {mIsSigned = true;}
 
         // Hint: Use these keywords instead: They fully describe the data.
-        if (Contains(optPos, "beu16")) {mIsSigned = false; mIsBigEndian = true;}
-        if (Contains(optPos, "leu16")) {mIsSigned = false; mIsBigEndian = false;}
-        if (Contains(optPos, "bei16")) {mIsSigned = true;  mIsBigEndian = true;}
-        if (Contains(optPos, "lei16")) {mIsSigned = true;  mIsBigEndian = false;}
+        if (contains(optPos, "beu16")) {mIsSigned = false; mIsBigEndian = true;}
+        if (contains(optPos, "leu16")) {mIsSigned = false; mIsBigEndian = false;}
+        if (contains(optPos, "bei16")) {mIsSigned = true;  mIsBigEndian = true;}
+        if (contains(optPos, "lei16")) {mIsSigned = true;  mIsBigEndian = false;}
     }
 
-    bool Contains(int startPos, const QString & key) const
+    bool contains(int startPos, const QString & key) const
     {
         QRegularExpression re(QString("\\b%1\\b").arg(key));
         return re.match(mTxt, startPos).hasMatch();
     }
 
-    bool Find(QString & dst, int startPos, const QString & key) const
+    bool find(QString & dst, int startPos, const QString & key) const
     {
         const QString pattern = key + QString("[=\\s](\\S+)");
         QRegularExpression re(pattern);
@@ -327,7 +329,7 @@ private:
         return false;
     }
 
-    void AddError()
+    void error()
     {
         ++mErrors;
     }
@@ -342,21 +344,22 @@ class DataChannel
 private:
     double mMin;
     double mMax;
-    MicroSecond mDuration;
+    Second mDuration;
     std::vector<DataFile> mFiles;
 public:
-    void Plus(DataFile & file)
+    void plus(DataFile & file)
     {
         mFiles.push_back(file);
     }
 
-    void Minus(DataFile & file)
+    void minus(DataFile & file)
     {
-        const int index = mFiles.size() - 1;
-        mFiles[index].Minus(file);
+        if (mFiles.size() < 1) return;
+        const size_t index = mFiles.size() - 1;
+        mFiles[index].minus(file);
     }
 
-    void SetComplete()
+    void done()
     {
         if (mFiles.size() < 1)
         {
@@ -366,26 +369,26 @@ public:
             return;
         }
 
-        mMin = mFiles[0].Min();
-        mMax = mFiles[0].Max();
-        mDuration = mFiles[0].Duration();
+        mMin = mFiles[0].min();
+        mMax = mFiles[0].max();
+        mDuration = mFiles[0].duration();
 
         for (auto & file:mFiles)
         {
-            if (mMin > file.Min()) {mMin = file.Min();}
-            if (mMax < file.Max()) {mMax = file.Max();}
-            if (mDuration < file.Duration()) {mDuration = file.Duration();}
+            if (mMin > file.min()) {mMin = file.min();}
+            if (mMax < file.max()) {mMax = file.max();}
+            if (mDuration < file.duration()) {mDuration = file.duration();}
         }
     }
     
-    const std::vector<DataFile> & Files() const
+    const std::vector<DataFile> & files() const
     {
        return mFiles;
     }
 
-    double Min() const {return mMin;}
-    double Max() const {return mMax;}
-    MicroSecond Duration() const {return mDuration;}
+    double min() const {return mMin;}
+    double max() const {return mMax;}
+    Second duration() const {return mDuration;}
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -396,7 +399,7 @@ class DataMain
 {
 private:
     std::vector<DataChannel> mChannels;
-    MicroSecond mDuration;
+    Second mDuration;
     bool mIsValid;
 public:
     explicit DataMain(const QString & infoName):
@@ -437,15 +440,15 @@ public:
         
         for (auto & file:fileList)
         {
-            if (!file.IsValid())
+            if (!file.valid())
             {
-                qDebug() << "Could not parse:" << file.Txt();
-                return;
+                qDebug() << "Could not parse:" << file.txt();
+                continue;
             }
 
-            if (file.IsOperator(">")) New(file);
-            if (file.IsOperator("+")) Plus(file);
-            if (file.IsOperator("-")) Minus(file);
+            if (file.isOperator(">")) create(file);
+            if (file.isOperator("+")) plus(file);
+            if (file.isOperator("-")) minus(file);
         }
 
         mIsValid = (mChannels.size() > 0);
@@ -453,37 +456,38 @@ public:
         
         for (auto & chan:mChannels)
         {
-            chan.SetComplete();
-            if (mDuration < chan.Duration()) {mDuration = chan.Duration();}
+            chan.done();
+            if (mDuration < chan.duration()) {mDuration = chan.duration();}
         }
     }
     
-    bool IsValid() const {return mIsValid;}
-    MicroSecond Duration() const {return mDuration;}
-    double Seconds() const {return static_cast<double>(Duration()) / 1000000.0;}
+    bool valid() const {return mIsValid;}
+    Second duration() const {return mDuration;}
 
-    const std::vector<DataChannel> & Channels() const
+    const std::vector<DataChannel> & channels() const
     {
        return mChannels;
     }
 private:
-    void New(DataFile & file)
+    void create(DataFile & file)
     {
         DataChannel data;
         mChannels.push_back(data);
-        Plus(file);
+        plus(file);
     }
 
-    void Plus(DataFile & file)
+    void plus(DataFile & file)
     {
-        const int index = mChannels.size() - 1;
-        mChannels[index].Plus(file);
+        if (mChannels.size() < 1) return;
+        const size_t index = mChannels.size() - 1;
+        mChannels[index].plus(file);
     }
 
-    void Minus(DataFile & file)
+    void minus(DataFile & file)
     {
-        const int index = mChannels.size() - 1;
-        mChannels[index].Minus(file);
+        if (mChannels.size() < 1) return;
+        const size_t index = mChannels.size() - 1;
+        mChannels[index].minus(file);
     }
 };
 
@@ -652,15 +656,15 @@ private:
     const UnitScale & mX;
     const UnitScale & mY;
     double mGain;
-    MicroSecond mDelay;
-    MicroSecond mSamplePeriod;
+    double mSps;
+    Second mDelay;
 public:
     explicit Translate(const UnitScale & x, const UnitScale & y):
         mX(x),
         mY(y),
         mGain(0),
-        mDelay(0),
-        mSamplePeriod(0)
+        mSps(0),
+        mDelay(0)
     {
     }
 
@@ -679,9 +683,9 @@ public:
 
     void setData(const DataFile & data)
     {
-        mGain = data.SampleGain();
-        mDelay = data.SignalDelay();
-        mSamplePeriod = data.SamplePeriod();
+        mGain = data.gain();
+        mSps = data.sps();
+        mDelay = data.delay();
     }
 
     void setGain(double gain)
@@ -691,18 +695,17 @@ public:
 
     double samplesPerPixel() const
     {
-        const double sps = 1000000.0 / mSamplePeriod;
-        return sps / mX.pixelPerUnit();
+        return mSps / mX.pixelPerUnit();
     }
 
     int XPixelToSampleIndex(int xpx) const
     {
-        return (XPixelToMicroSecond(xpx) - mDelay) / mSamplePeriod;
+        return static_cast<int>((mX.FromPixel(xpx) - mDelay) * mSps);
     }
 
-    int SampleIndexToXPixel(int idx) const
+    int SampleIndexToXPixel(double idx) const
     {
-        return MicroSecondToXPixel(idx * mSamplePeriod + mDelay);
+        return mX.ToPixel(idx / mSps + mDelay);
     }
 
     double YPixelToUnit(int ypx) const
@@ -712,22 +715,12 @@ public:
     
     int UnitToYPixel(double unit) const
     {
-        return mY.pixelSize() - mY.ToPixel(unit);
+        return static_cast<int>(mY.pixelSize() - mY.ToPixel(unit));
     }
     
     int LsbToYPixel(int lsb) const
     {
         return UnitToYPixel(mGain * lsb);
-    }
-private:
-    MicroSecond XPixelToMicroSecond(int xpx) const
-    {
-        return static_cast<MicroSecond>(1000000.0 * mX.FromPixel(xpx));
-    }
-
-    int MicroSecondToXPixel(MicroSecond us) const
-    {
-        return mX.ToPixel(static_cast<double>(us) / 1000000.0);
     }
 };
 
@@ -871,16 +864,16 @@ void DrawChannel::Draw(QWidget & parent, const QRect & rect)
     DrawAnnotations(painter, rect);
 }
 
-void DrawChannel::DrawAnnotations(QPainter & painter, const QRect & rect)
+void DrawChannel::DrawAnnotations(QPainter & painter, const QRect & )
 {
     painter.drawText(20, 10, "Test");
 }
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 {
-    for (auto & data:mData.Files())
+    for (auto & data:mData.files())
     {
-        if (data.Values().size() < 2)
+        if (data.samples().size() < 2)
         {
             continue;
         }
@@ -901,7 +894,7 @@ void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
 
 void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data)
 {
-    const int indexEnd = data.Values().size() - 1;
+    const int indexEnd = static_cast<int>(data.samples().size()) - 1;
     const int xpxEnd = rect.right() + 2;
         
     for (int xpx = rect.left(); xpx < xpxEnd; ++xpx)
@@ -917,7 +910,7 @@ void DrawChannel::DrawPixelWise(QPainter & painter, const QRect & rect, const Da
         // 1st line per xpx:
         // - from last sample in previous xpx
         // - to first sample in current xpx
-        auto itFirst = data.Values().begin() + indexFirst;
+        auto itFirst = data.samples().begin() + indexFirst;
         auto first = mTranslate.LsbToYPixel(*itFirst);
         auto last = mTranslate.LsbToYPixel(*(itFirst - 1));
         painter.drawLine(xpx - 1, last, xpx, first);
@@ -938,14 +931,14 @@ void DrawChannel::DrawSampleWise(QPainter & painter, const QRect & rect, const D
     const int indexFirst = mTranslate.XPixelToSampleIndex(rect.left());
     const int indexLast = mTranslate.XPixelToSampleIndex(rect.right() + 2);
     const int indexBegin = (indexFirst < 0) ? 0 : indexFirst;
-    const int indexMax = data.Values().size();
+    const int indexMax = static_cast<int>(data.samples().size());
     const int indexEnd = (indexLast > indexMax) ? indexMax : indexLast;
     if ((indexEnd - indexBegin) < 2) return;
 
     const bool drawPoints = mTranslate.samplesPerPixel() < 0.5;
     auto indexNow = indexBegin;
-    auto now  = data.Values().begin() + indexNow;
-    auto end  = data.Values().begin() + indexEnd;
+    auto now  = data.samples().begin() + indexNow;
+    auto end  = data.samples().begin() + indexEnd;
     auto yold = mTranslate.LsbToYPixel(*now);
     auto xold = mTranslate.SampleIndexToXPixel(indexNow);
     ++now;
@@ -1082,15 +1075,15 @@ public:
         
         mValueScale.setYResolution();
         mValueScale.setPixel(height());
-        mValueScale.setData(data.Min(), data.Max());
+        mValueScale.setData(data.min(), data.max());
 
         setFocusPolicy(Qt::StrongFocus);
     }
 
     QString ValueUnit() const
     {
-        if (mData.Files().size() < 1) return "";
-        return mData.Files()[0].Unit();
+        if (mData.files().size() < 1) return "";
+        return mData.files()[0].unit();
     }
 
     QString FormatValue(double value) const
@@ -1199,7 +1192,6 @@ class GuiMain : public QWidget
 {
     Q_OBJECT
 private:
-    const GuiSetup & mSetup;    
     const DataMain & mData;
     QStatusBar * mStatus;
     GuiMeasure * mMeasure;
@@ -1229,9 +1221,8 @@ private slots:
         updateStatus();
     }
 public:
-    GuiMain(QMainWindow * parent, const GuiSetup & setup, const DataMain & data):
+    GuiMain(QMainWindow * parent, const DataMain & data):
         QWidget(parent),
-        mSetup(setup),
         mData(data),
         mStatus(parent->statusBar()),
         mMeasure(nullptr),
@@ -1239,9 +1230,9 @@ public:
         mChannels()
     {
         QVBoxLayout * layout = new QVBoxLayout(this);
-        for (auto & chan:mData.Channels())
+        for (auto & chan:mData.channels())
         {
-            GuiWave * gui = new GuiWave(this, chan, data.Seconds());
+            GuiWave * gui = new GuiWave(this, chan, data.duration());
             layout->addWidget(gui);
             mChannels.push_back(gui);
             connect(gui, SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
@@ -1391,9 +1382,9 @@ public:
         mSetup.fileName = name;
         mData = new DataMain(name);
 
-        if (mData->IsValid())
+        if (mData->valid())
         {
-            mGui = new GuiMain(this, mSetup, *mData);
+            mGui = new GuiMain(this, *mData);
         }
         else
         {
@@ -1443,13 +1434,13 @@ int main(int argc, char * argv[])
 // Testing
 ////////////////////////////////////////////////////////////////////////////////
 
-TEST(DataFile, Parse)
+TEST(DataFile, parse)
 {
-    EXPECT_TRUE(DataFile("dummy 500 1 mV X", "").IsValid());
-    EXPECT_TRUE(DataFile("dummy 500 1.0 mV X", "").IsValid());
-    EXPECT_FALSE(DataFile("dummy 500 1 mV ", "").IsValid()); // label missing
-    EXPECT_FALSE(DataFile("dummy 500 D mV X", "").IsValid()); // divisor wrong
-    EXPECT_FALSE(DataFile("dummy 500.0 1 mV X", "").IsValid()); // sps wrong
+    EXPECT_TRUE(DataFile("dummy 500 1 mV X", "").valid());
+    EXPECT_TRUE(DataFile("dummy 500 1.0 mV X", "").valid());
+    EXPECT_FALSE(DataFile("dummy 500 1 mV ", "").valid()); // label missing
+    EXPECT_FALSE(DataFile("dummy 500 D mV X", "").valid()); // divisor wrong
+    EXPECT_FALSE(DataFile("dummy 500.0 1 mV X", "").valid()); // sps wrong
 }
 
 inline bool IsEqual(double a, double b)
