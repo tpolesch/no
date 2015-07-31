@@ -7,9 +7,7 @@
 
 typedef int64_t IntType;
 typedef IntType MicroSecond;
-typedef IntType MilliSecond;
-typedef double FloatType;
-typedef FloatType MilliVolt;
+typedef double Seconds;
 inline static MicroSecond FromMilliSec(IntType ms)
 {
     return ms * 1000ll;
@@ -100,12 +98,12 @@ public:
         SetSamples(path);
     }
 
-    MilliVolt Min() const
+    double Min() const
     {
         return SampleGain() * mMin;
     }
     
-    MilliVolt Max() const
+    double Max() const
     {
         return SampleGain() * mMax;
     }
@@ -162,8 +160,8 @@ public:
 
         for (MicroSecond us = 0; us < Duration(); us += SamplePeriod())
         {
-            const MilliVolt a = At(us);
-            const MilliVolt b = other.At(us);
+            const double a = At(us);
+            const double b = other.At(us);
 
             if (isnan(a) || (isnan(b)))
             {
@@ -342,8 +340,8 @@ private:
 class DataChannel
 {
 private:
-    MilliVolt mMin;
-    MilliVolt mMax;
+    double mMin;
+    double mMax;
     MicroSecond mDuration;
     std::vector<DataFile> mFiles;
 public:
@@ -385,8 +383,8 @@ public:
        return mFiles;
     }
 
-    MilliVolt Min() const {return mMin;}
-    MilliVolt Max() const {return mMax;}
+    double Min() const {return mMin;}
+    double Max() const {return mMax;}
     MicroSecond Duration() const {return mDuration;}
 };
 
@@ -488,94 +486,6 @@ private:
         mChannels[index].Minus(file);
     }
 };
-
-////////////////////////////////////////////////////////////////////////////////
-// class PixelScaling
-////////////////////////////////////////////////////////////////////////////////
-
-class PixelScaling
-{
-private:
-    static double MilliMeterPerMilliVolt() {return 10.0;}
-    static double MilliMeterPerSecond() {return 25.0;}
-    double mLsbGain;
-    int mLsbOffset;
-    int mXmm;
-    int mXpx;
-    int mYmm;
-    int mYpx;
-public:
-    explicit PixelScaling(int xzoom, int yzoom);
-    void SetLsbGain(double arg) {mLsbGain = arg;}
-    void SetLsbOffset(int arg) {mLsbOffset = arg;}
-
-    inline int MilliMeterAsXPixel(double arg) const
-    {
-        return arg * mXpx / mXmm;
-    }
-
-    inline int MilliMeterAsYPixel(double arg) const
-    {
-        return arg * mYpx / mYmm;
-    }
-
-    inline int MilliVoltAsYPixel(MilliVolt mv) const
-    {
-        return MilliMeterAsYPixel(mv * MilliMeterPerMilliVolt());
-    }
-
-    inline int MicroSecondAsXPixel(MicroSecond us) const
-    {
-        const double sec = static_cast<double>(us) / 1000000.0;
-        return MilliMeterAsXPixel(sec * MilliMeterPerSecond());
-    }
-
-    inline double XPixelAsMilliMeter(int xpx) const
-    {
-        return (static_cast<double>(xpx) * mXmm) / mXpx;
-    }
-
-    inline double YPixelAsMilliMeter(int px) const
-    {
-        return (static_cast<double>(px) * mYmm) / mYpx;
-    }
-
-    inline MilliSecond XPixelAsMilliSecond(int px) const
-    {
-        const FloatType mm = XPixelAsMilliMeter(px);
-        return static_cast<MilliSecond>(1000.0 * mm / MilliMeterPerSecond());
-    }
-
-    inline MicroSecond XPixelAsMicroSecond(int px) const
-    {
-        return static_cast<MicroSecond>(XPixelAsMilliSecond(px) * 1000ll);
-    }
-
-    inline MilliVolt YPixelAsMilliVolt(int px) const
-    {
-        return YPixelAsMilliMeter(px) / MilliMeterPerMilliVolt();
-    }
-
-    inline int LsbAsYPixel(int lsb) const
-    {
-        return mLsbOffset - MilliVoltAsYPixel(mLsbGain * lsb);
-    }
-};
-
-PixelScaling::PixelScaling(int xzoom, int yzoom):
-    mLsbGain(1.0),
-    mLsbOffset(0)
-{
-    const QDesktopWidget desk;
-    mXmm = desk.widthMM();
-    mYmm = desk.heightMM();
-    mXpx = desk.width();
-    mYpx = desk.height();
-    if (xzoom > 0) {mXpx *= (1 << xzoom);}
-    if (yzoom > 0) {mYpx *= (1 << yzoom);}
-    if (xzoom < 0) {mXmm *= (1 << (-xzoom));}
-    if (yzoom < 0) {mYmm *= (1 << (-yzoom));}
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 // UnitScale
@@ -795,7 +705,7 @@ public:
         return MicroSecondToXPixel(idx * mSamplePeriod + mDelay);
     }
 
-    MilliVolt YPixelToUnit(int ypx) const
+    double YPixelToUnit(int ypx) const
     {
         return mY.FromPixel(mY.pixelSize() - ypx);
     }
