@@ -833,6 +833,7 @@ public:
             const UnitScale & valueScale);
     void Draw(QWidget & parent, const QRect & rect);
 private:
+    void DrawAnnotations(QPainter & painter, const QRect & rect);
     void DrawSamples(QPainter & painter, const QRect & rect);
     void DrawSampleWise(QPainter & painter, const QRect & rect, const DataFile & data);
     void DrawPixelWise(QPainter & painter, const QRect & rect, const DataFile & data);
@@ -947,12 +948,22 @@ DrawChannel::DrawChannel(const DataChannel & data,
 
 void DrawChannel::Draw(QWidget & parent, const QRect & rect)
 {
+    QFont font = parent.font();
+    if (font.pointSize() > 8) {font.setPointSize(8);}
+
     QPainter painter(&parent);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(mLinePen);
+    painter.setFont(font);
     painter.fillRect(rect, Qt::white);
 
     DrawSamples(painter, rect);
+    DrawAnnotations(painter, rect);
+}
+
+void DrawChannel::DrawAnnotations(QPainter & painter, const QRect & rect)
+{
+    painter.drawText(20, 10, "Test");
 }
 
 void DrawChannel::DrawSamples(QPainter & painter, const QRect & rect)
