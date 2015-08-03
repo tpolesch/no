@@ -1,9 +1,8 @@
-*.swp
-*.o
-moc_*.cpp
 no
 nodbg
 Makefile
 Makefile.Debug
 Makefile.Release
+debug/
+release/
 

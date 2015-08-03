@@ -61,6 +61,103 @@ public:
     const QString & txt() const {return mTxt;}
 };
 
+class InfoParser
+{
+private:
+    QString mRemaining;
+public:
+    InfoParser(const QString & data):
+        mRemaining(data)
+    {
+    }
+    
+    const QString & remaining() const
+    {
+        return mRemaining;
+    }
+
+    QString oper()
+    {
+        // Allow one leading operand:
+        // ">" creates a new channel for the info line
+        // "+" adds the info line to an existing channel
+        // "-" substract the data file from the last data
+        //     file in existing channel
+        QRegularExpression find("^\\s*([>+-])\\s*");
+        QRegularExpressionMatch match = find.match(mRemaining);
+        QString result(">");
+
+        if (match.hasMatch())
+        {
+            result = match.captured(1);
+        }
+        else
+        {
+            // minimum: jump behind leading whitespace
+            QRegularExpression spaces("^\\s+");
+            match = spaces.match(mRemaining);
+        }
+
+        if (match.hasMatch())
+        {
+            mRemaining = mRemaining.remove(0, match.capturedEnd(0));
+        }
+
+        return result;
+    }
+
+    QString pop()
+    {
+        // anything between double quotes
+        QRegularExpression quoted("^(\".+\")\\s*");
+        QRegularExpressionMatch match = quoted.match(mRemaining);
+
+        if (!match.hasMatch())
+        {
+            // non-whitespace before next whitespace
+            QRegularExpression normal("^(\\S+)\\s*");
+            match = normal.match(mRemaining);
+        }
+
+        if (match.hasMatch())
+        {
+            mRemaining = mRemaining.remove(0, match.capturedEnd(0));
+            return match.captured(1);
+        }
+
+        mRemaining.clear();
+        return mRemaining;
+    }
+
+    QString unquoted(const QString & data) const
+    {
+        QRegularExpression quoted("^\"(.+)\"$");
+        QRegularExpressionMatch match = quoted.match(data);
+        return match.hasMatch() ? match.captured(1).trimmed() : data;
+    }
+
+    bool tag(const QString & key) const
+    {
+        QRegularExpression re(QString("\\b%1\\b").arg(key));
+        return re.match(remaining()).hasMatch();
+    }
+
+    bool value(QString & dst, const QString & key) const
+    {
+        QRegularExpression re(QString("\\b%1").arg(key) + "[=\\s](\\S+)");
+        QRegularExpressionMatch match = re.match(remaining());
+
+        if (match.hasMatch())
+        {
+            dst = match.captured(1);
+            return true;
+        }
+
+        dst = "";
+        return false;
+    }
+};
+
 class DataFile
 {
 private:
@@ -87,7 +184,7 @@ public:
     DataFile & operator=(const DataFile &) = default;
     DataFile(const DataFile &) = default;
     DataFile() = delete;
-    explicit DataFile(const QString & txt, const QString & path):
+    explicit DataFile(const QString & txt, const QString & path = ""):
         mSamples(),
         mDelay(0.0),
         mSps(0.0),
@@ -107,9 +204,19 @@ public:
         mIsSigned(true),
         mIsBigEndian(true)
     {
-        parseTxt();
+        parseInfo();
         readData();
         readAnno();
+    }
+
+    int sampleMask() const
+    {
+        return mSampleMask;
+    }
+
+    int sampleOffset() const
+    {
+        return mSampleOffset;
     }
 
     double min() const
@@ -308,59 +415,31 @@ private:
         }
     }
 
-    QString removeQuotes(const QString & str) const
+    void parseInfo()
     {
-        QRegularExpressionMatch match = QRegularExpression("^\"(.+)\"$").match(str);
-        return match.hasMatch() ? match.captured(1) : str;
-    }
+        InfoParser parser(mTxt);
+        mOper = parser.oper();
+        mData = parser.pop();
+        const QString txtSps = parser.pop();
+        bool done = true;
+        mSps  = txtSps.toDouble(&done);
+        if (!done) error();
+        const QString txtDiv = parser.pop();
+        double gainDividend = 1.0;
+        const double gainDivisor = txtDiv.toDouble(&done);
+        if (!done) error();
+        mUnit = parser.pop();
+        mLabel = parser.unquoted(parser.pop());
 
-    void parseTxt()
-    {
-        if (!QRegularExpression("^[>+-]").match(mTxt).hasMatch())
-        {
-            mTxt = "> " + mTxt;
-        }
-
-        double div = 1.0;
-        int optPos = -1;
-        bool valid = true;
-        QRegularExpression re("^([>+-])\\s*(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s*");
-        QRegularExpressionMatch match = re.match(mTxt);
-
-        if (match.hasMatch())
-        {
-            int sps = 0;
-            mOper = match.captured(1);
-            mData = match.captured(2);
-            if (valid) {sps = match.captured(3).toInt(&valid);}
-            if (valid) {div = match.captured(4).toDouble(&valid);}
-            mUnit = match.captured(5);
-            mLabel = removeQuotes(match.captured(6));
-            optPos = match.capturedEnd(0);
-
-            if (sps == 0)
-            {
-                error();
-                return;
-            }
-
-            mSps = sps;
-        }
-        else
-        {
-            error();
-            return;
-        }
-
-        int delay = 0;
         QString dst;
-        if (find(dst, optPos, "anno_file")) {mAnno = dst;}
-        if (valid && find(dst, optPos, "s-mask")) {mSampleMask = dst.toInt(&valid, 0);}
-        if (valid && find(dst, optPos, "offset")) {mSampleOffset = dst.toInt(&valid, 0);}
-        if (valid && find(dst, optPos, "delay")) {delay = dst.toInt(&valid, 0);}
-        if (valid && find(dst, optPos, "gain")) {mGain = dst.toDouble(&valid) / div;}
-        if (!valid) {error();}
-        mDelay = static_cast<double>(delay) / 1000;
+        if (done && parser.value(dst, "anno_file")) {mAnno = dst;}
+        if (done && parser.value(dst, "s-mask")) {mSampleMask = dst.toInt(&done, 0);}
+        if (done && parser.value(dst, "offset")) {mSampleOffset = dst.toInt(&done, 0);}
+        if (done && parser.value(dst, "delay")) {mDelay = dst.toDouble(&done) / 1000.0;}
+        if (done && parser.value(dst, "gain")) {gainDividend = dst.toDouble(&done);}
+        if (!done) {error();}
+
+        mGain = gainDividend / gainDivisor;
 
         if (mSampleMask == 0x3fff)
         {
@@ -370,37 +449,15 @@ private:
         }
 
         // Hint: Avoid these keywords. They describe only a part of the data.
-        if (contains(optPos, "swab"))  {mIsBigEndian = false;}
-        if (contains(optPos, "u16"))   {mIsSigned = false;}
-        if (contains(optPos, "i16"))   {mIsSigned = true;}
+        if (parser.tag("swab"))  {mIsBigEndian = false;}
+        if (parser.tag("u16"))   {mIsSigned = false;}
+        if (parser.tag("i16"))   {mIsSigned = true;}
 
         // Hint: Use these keywords instead: They fully describe the data.
-        if (contains(optPos, "beu16")) {mIsSigned = false; mIsBigEndian = true;}
-        if (contains(optPos, "leu16")) {mIsSigned = false; mIsBigEndian = false;}
-        if (contains(optPos, "bei16")) {mIsSigned = true;  mIsBigEndian = true;}
-        if (contains(optPos, "lei16")) {mIsSigned = true;  mIsBigEndian = false;}
-    }
-
-    bool contains(int startPos, const QString & key) const
-    {
-        QRegularExpression re(QString("\\b%1\\b").arg(key));
-        return re.match(mTxt, startPos).hasMatch();
-    }
-
-    bool find(QString & dst, int startPos, const QString & key) const
-    {
-        const QString pattern = key + QString("[=\\s](\\S+)");
-        QRegularExpression re(pattern);
-        QRegularExpressionMatch match = re.match(mTxt, startPos);
-
-        if (match.hasMatch())
-        {
-            dst = match.captured(1);
-            return true;
-        }
-
-        dst = "";
-        return false;
+        if (parser.tag("beu16")) {mIsSigned = false; mIsBigEndian = true;}
+        if (parser.tag("leu16")) {mIsSigned = false; mIsBigEndian = false;}
+        if (parser.tag("bei16")) {mIsSigned = true;  mIsBigEndian = true;}
+        if (parser.tag("lei16")) {mIsSigned = true;  mIsBigEndian = false;}
     }
 
     void error()
@@ -1558,13 +1615,61 @@ int main(int argc, char * argv[])
 // Testing
 ////////////////////////////////////////////////////////////////////////////////
 
-TEST(DataFile, parse)
+TEST(InfoParser, value)
 {
-    EXPECT_TRUE(DataFile("dummy 500 1 mV X", "").valid());
-    EXPECT_TRUE(DataFile("dummy 500 1.0 mV X", "").valid());
-    EXPECT_FALSE(DataFile("dummy 500 1 mV ", "").valid()); // label missing
-    EXPECT_FALSE(DataFile("dummy 500 D mV X", "").valid()); // divisor wrong
-    EXPECT_FALSE(DataFile("dummy 500.0 1 mV X", "").valid()); // sps wrong
+    InfoParser info("one=aaa two=bbb three=ccc");
+    QString dst;
+    EXPECT_TRUE(info.value(dst, "one"));
+    EXPECT_EQ("aaa", dst);
+    EXPECT_TRUE(info.value(dst, "two"));
+    EXPECT_EQ("bbb", dst);
+    EXPECT_TRUE(info.value(dst, "three"));
+    EXPECT_EQ("ccc", dst);
+}
+
+TEST(InfoParser, tag)
+{
+    InfoParser info("one two three");
+    EXPECT_TRUE(info.tag("one"));
+    EXPECT_TRUE(info.tag("two"));
+    EXPECT_TRUE(info.tag("three"));
+    EXPECT_FALSE(info.tag("\"one\""));
+}
+
+TEST(InfoParser, unquoted)
+{
+    InfoParser info("");
+    EXPECT_EQ("quoted 1", info.unquoted("\" \tquoted 1 \""));
+}
+
+TEST(InfoParser, pop)
+{
+    InfoParser info("+   normal \"quoted 1\"  remaining");
+    EXPECT_EQ("+", info.oper());
+    EXPECT_EQ("normal", info.pop());
+    EXPECT_EQ("\"quoted 1\"", info.pop());
+    EXPECT_EQ("remaining", info.remaining());
+    EXPECT_EQ("remaining", info.pop());
+    EXPECT_EQ("", info.remaining());
+}
+
+TEST(InfoParser, oper)
+{
+    InfoParser a("remaining");
+    EXPECT_EQ(">", a.oper());
+    EXPECT_EQ("remaining", a.remaining());
+
+    InfoParser b("  remaining");
+    EXPECT_EQ(">", b.oper());
+    EXPECT_EQ("remaining", b.remaining());
+
+    InfoParser c("+remaining");
+    EXPECT_EQ("+", c.oper());
+    EXPECT_EQ("remaining", c.remaining());
+
+    InfoParser d("  -   remaining");
+    EXPECT_EQ("-", d.oper());
+    EXPECT_EQ("remaining", d.remaining());
 }
 
 inline bool IsEqual(double a, double b)
@@ -1572,6 +1677,31 @@ inline bool IsEqual(double a, double b)
     if (std::fabs(a - b) < 0.00001) return true;
     qDebug() << "IsEqual" << a << b;
     return false;
+}
+
+TEST(DataFile, parse)
+{
+    DataFile a("dummy 500 2 mv \"Ecg 1\" gain=0.5 s-mask 32 offset=0x10");
+    EXPECT_TRUE(a.valid());
+    EXPECT_TRUE(IsEqual(500, a.sps()));
+    EXPECT_TRUE(IsEqual(0.25, a.gain()));
+    EXPECT_EQ("mv", a.unit());
+    EXPECT_EQ("Ecg 1", a.label());
+    EXPECT_EQ(32, a.sampleMask());
+    EXPECT_EQ(16, a.sampleOffset());
+
+    DataFile b("dummy 100 0.5");
+    EXPECT_TRUE(b.valid());
+    EXPECT_TRUE(IsEqual(100, b.sps()));
+    EXPECT_TRUE(IsEqual(2, b.gain()));
+    EXPECT_EQ("", b.unit());
+    EXPECT_EQ("", b.label());
+
+    DataFile c("dummy x");
+    EXPECT_FALSE(c.valid());
+
+    DataFile d("dummy 100 x");
+    EXPECT_FALSE(d.valid());
 }
 
 TEST(UnitScale, xy)
