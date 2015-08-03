@@ -883,7 +883,7 @@ public:
             const UnitScale & timeScale,
             const UnitScale & valueScale);
 private:
-    void DrawDecorations(const QString & label);
+    void DrawDecorations(const DataChannel & chan);
     void DrawSampleWise(const DataFile & data);
     void DrawPixelWise(const DataFile & data);
     void DrawAnnotations(const DataFile & data, bool hasSamples);
@@ -1031,15 +1031,20 @@ DrawChannel::DrawChannel(QWidget & parent,
         }
     }
 
-    DrawDecorations(label);
+    DrawDecorations(chan);
 }
 
-void DrawChannel::DrawDecorations(const QString & label)
+void DrawChannel::DrawDecorations(const DataChannel & chan)
 {
     const int flags = Qt::TextSingleLine|Qt::TextDontClip;
-    const QRect parent(mParent.rect());
-    const QRect bounds = mPainter.boundingRect(parent, flags, label);
-    mPainter.drawText(bounds.bottomLeft(), label);
+    QRect lastBounds(mParent.rect());
+
+    for (auto & data:chan.files())
+    {
+        const QRect bounds = mPainter.boundingRect(lastBounds, flags, data.label());
+        mPainter.drawText(bounds.bottomLeft(), data.label());
+        lastBounds.moveTop(bounds.bottom());
+    }
 }
 
 void DrawChannel::DrawAnnotations(const DataFile & data, bool hasSamples)
@@ -1337,8 +1342,15 @@ public:
     {
         QString result;
         QTextStream s(&result);
-        s << "from " << FormatTime(mTimeScale.min());
-        s << " to " << FormatTime(mTimeScale.max());
+
+        if (mData.files().size() > 0)
+        {
+            const DataFile & file = mData.files()[0];
+            s << "data = " << FormatTime(file.duration()) << ", ";
+        }
+
+        s << "visible = {" << FormatTime(mTimeScale.min());
+        s << ", " << FormatTime(mTimeScale.max()) << "}";
         return result;
     }
 
@@ -1346,8 +1358,16 @@ public:
     {
         QString result;
         QTextStream s(&result);
-        s << "from " << FormatValue(mValueScale.min());
-        s << " to " << FormatValue(mValueScale.max());
+
+        if (mData.files().size() > 0)
+        {
+            const DataFile & file = mData.files()[0];
+            s << "data = {" << FormatValue(file.min());
+            s << ", " << FormatValue(file.max()) << "}, ";
+        }
+
+        s << "visible = {" << FormatValue(mValueScale.min());
+        s << ", " << FormatValue(mValueScale.max()) << "}";
         return result;
     }
 
