@@ -919,6 +919,7 @@ public:
     }
 signals:
     void signalMoved();
+    void signalResized();
 private:
     void mousePressEvent(QMouseEvent *evt) override
     {
@@ -939,7 +940,7 @@ private:
 
     void resizeEvent(QResizeEvent *) override
     {
-        emit signalMoved();
+        emit signalResized();
     }
 
     void paintEvent(QPaintEvent *) override
@@ -1302,20 +1303,51 @@ public:
         return result;
     }
 
-    QString status(const GuiMeasure & measure) const
+    QString focusString() const
     {
         QString result;
-        QTextStream txt(&result);
-        txt << "F={"
-            << FormatTime(mTimeScale.focus()) << " "
-            << FormatValue(mValueScale.focus()) << "} "
-            << "} M={"
-            << FormatTime(mTimeScale.pixelToUnit(measure.width()))
-            << FormatValue(mValueScale.pixelToUnit(measure.height()))
-            << "} Z={"
-            << mTimeScale.mmPerUnit() << "mm/s, "
-            << mValueScale.mmPerUnit() << "mm/" << ValueUnit()
-            << "}";
+        QTextStream s(&result);
+        s << "focus = ";
+        s << FormatTime(mTimeScale.focus()) << ", ";
+        s << FormatValue(mValueScale.focus());
+        return result;
+    }
+
+    QString measureString(const GuiMeasure & measure) const
+    {
+        QString result;
+        QTextStream s(&result);
+        s << "measure = ";
+        s << FormatTime(mTimeScale.pixelToUnit(measure.width())) << ", ";
+        s << FormatValue(mValueScale.pixelToUnit(measure.height()));
+        return result;
+    }
+
+    QString zoomString() const
+    {
+        QString result;
+        QTextStream s(&result);
+        s << "zoom = ";
+        s << mTimeScale.mmPerUnit() << "mm/s, ";
+        s << mValueScale.mmPerUnit() << "mm/" << ValueUnit();
+        return result;
+    }
+
+    QString timeString() const
+    {
+        QString result;
+        QTextStream s(&result);
+        s << "from " << FormatTime(mTimeScale.min());
+        s << " to " << FormatTime(mTimeScale.max());
+        return result;
+    }
+
+    QString valueString() const
+    {
+        QString result;
+        QTextStream s(&result);
+        s << "from " << FormatValue(mValueScale.min());
+        s << " to " << FormatValue(mValueScale.max());
         return result;
     }
 
@@ -1394,12 +1426,16 @@ private slots:
         slotMeasureMoved();
     }
 
+    void slotMeasureResized()
+    {
+        setFocus();
+        statusMeasure();
+    }
+
     void slotMeasureMoved()
     {
-        const QPoint focus = mMeasure->geometry().center();
-        for (auto & chan:mChannels) {chan->setXFocus(focus.x());}
-        if (mSelected) {mSelected->setYFocus(focus.y());}
-        updateStatus();
+        setFocus();
+        statusFocus();
     }
 public:
     GuiMain(QMainWindow * parent, const DataMain & data):
@@ -1424,25 +1460,51 @@ public:
         setLayout(layout);
     }
 
-    void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn(); }; updateStatus();}
-    void xzoomOut() {for (auto & chan:mChannels) {chan->xzoomOut();}; updateStatus();}
-    void left()     {for (auto & chan:mChannels) {chan->left();    }; updateStatus();}
-    void right()    {for (auto & chan:mChannels) {chan->right();   }; updateStatus();}
-    void yzoomIn()  {if (mSelected) {mSelected->yzoomIn(); }; updateStatus();}
-    void yzoomOut() {if (mSelected) {mSelected->yzoomOut();}; updateStatus();}
-    void up()       {if (mSelected) {mSelected->up();      }; updateStatus();}
-    void down()     {if (mSelected) {mSelected->down();    }; updateStatus();}
+    void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn(); }; statusZoom();}
+    void xzoomOut() {for (auto & chan:mChannels) {chan->xzoomOut();}; statusZoom();}
+    void left()     {for (auto & chan:mChannels) {chan->left();    }; statusTime();}
+    void right()    {for (auto & chan:mChannels) {chan->right();   }; statusTime();}
+    void yzoomIn()  {if (mSelected) {mSelected->yzoomIn(); }; statusZoom();}
+    void yzoomOut() {if (mSelected) {mSelected->yzoomOut();}; statusZoom();}
+    void up()       {if (mSelected) {mSelected->up();      }; statusValue();}
+    void down()     {if (mSelected) {mSelected->down();    }; statusValue();}
 private:
-    void updateStatus()
+    void setFocus()
     {
-        if (mSelected && mMeasure)
-        {
-            mStatus->showMessage(mSelected->status(*mMeasure));
-        }
-        else
-        {
-            mStatus->clearMessage();
-        }
+        const QPoint focus = mMeasure->geometry().center();
+        for (auto & chan:mChannels) {chan->setXFocus(focus.x());}
+        if (mSelected) {mSelected->setYFocus(focus.y());}
+    }
+
+    void statusTime()
+    {
+        if (!mSelected) return;
+        mStatus->showMessage(mSelected->timeString());
+    }
+
+    void statusValue()
+    {
+        if (!mSelected) return;
+        mStatus->showMessage(mSelected->valueString());
+    }
+
+    void statusZoom()
+    {
+        if (!mSelected) return;
+        mStatus->showMessage(mSelected->zoomString());
+    }
+
+    void statusFocus()
+    {
+        if (!mSelected) return;
+        mStatus->showMessage(mSelected->focusString());
+    }
+
+    void statusMeasure()
+    {
+        if (!mSelected) return;
+        if (!mMeasure) return;
+        mStatus->showMessage(mSelected->measureString(*mMeasure));
     }
 
     void setMeasuredWave(GuiWave * wave)
@@ -1470,6 +1532,7 @@ private:
         gui->setMinimumSize(30, 30);
         gui->show();
         connect(gui, SIGNAL(signalMoved()), this, SLOT(slotMeasureMoved()));
+        connect(gui, SIGNAL(signalResized()), this, SLOT(slotMeasureResized()));
 
         mSelected = wave;
         mMeasure = gui;
