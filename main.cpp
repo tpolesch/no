@@ -410,8 +410,17 @@ private:
         else
         {
             auto minmax = std::minmax_element(samples().begin(), samples().end());
-            mSampleMin = *minmax.first;
-            mSampleMax = *minmax.second;
+
+            if (gain() > 0)
+            {
+                mSampleMin = *minmax.first;
+                mSampleMax = *minmax.second;
+            }
+            else
+            {
+                mSampleMax = *minmax.first;
+                mSampleMin = *minmax.second;
+            }
         }
     }
 
@@ -886,15 +895,14 @@ private:
     void DrawDecorations(const DataChannel & chan);
     void DrawSampleWise(const DataFile & data);
     void DrawPixelWise(const DataFile & data);
-    void DrawAnnotations(const DataFile & data, bool hasSamples);
+    void DrawAnnotations(const DataFile & data);
 
     QWidget & mParent;
     const QRect & mRect;
     Translate mTranslate;
     QPainter mPainter;
     MeasurePerformance mMeasurePerformance;
-    const QPen mPointPen;
-    QPen mLinePen;
+    const QPen mDefaultPen;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -998,25 +1006,21 @@ DrawChannel::DrawChannel(QWidget & parent,
     mTranslate(timeScale, valueScale),
     mPainter(&parent),
     mMeasurePerformance("DrawChannel"),
-    mPointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
-    mLinePen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)
+    mDefaultPen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)
 {
     QFont font = parent.font();
     if (font.pointSize() > 8) {font.setPointSize(8);}
 
     mPainter.setRenderHint(QPainter::Antialiasing, true);
-    mPainter.setPen(mLinePen);
     mPainter.setFont(font);
     mPainter.fillRect(mRect, Qt::white);
-    QString label;
 
     for (auto & data:chan.files())
     {
-        label += data.label() + " " ;
         mTranslate.setData(data);
         mTranslate.debug(rect);
 
-        DrawAnnotations(data, chan.hasSamples());
+        DrawAnnotations(data);
 
         if (data.samples().size() > 1)
         {
@@ -1036,6 +1040,7 @@ DrawChannel::DrawChannel(QWidget & parent,
 
 void DrawChannel::DrawDecorations(const DataChannel & chan)
 {
+    mPainter.setPen(mDefaultPen);
     const int flags = Qt::TextSingleLine|Qt::TextDontClip;
     QRect lastBounds(mParent.rect());
 
@@ -1047,13 +1052,17 @@ void DrawChannel::DrawDecorations(const DataChannel & chan)
     }
 }
 
-void DrawChannel::DrawAnnotations(const DataFile & data, bool hasSamples)
+void DrawChannel::DrawAnnotations(const DataFile & data)
 {
+    const QPen annoPen(Qt::lightGray, 1, Qt::DotLine, Qt::RoundCap, Qt::RoundJoin);
+    mPainter.setPen(annoPen);
+
     const int flags = Qt::TextSingleLine|Qt::TextDontClip;
     const int requestLeft = mRect.left();
     const int requestRight = mRect.right();
     const int max = INT_MAX;
     QRect lastBounds(INT_MIN, 0, 0, 0);
+    const int bottom = mParent.rect().bottom();
 
     for (auto & anno:data.annotations())
     {
@@ -1065,7 +1074,7 @@ void DrawChannel::DrawAnnotations(const DataFile & data, bool hasSamples)
 
         const bool isOverlapping = bounds.left() < lastBounds.right();
 
-        if (isOverlapping && !hasSamples)
+        if (isOverlapping)
         {
             bounds.moveTop(lastBounds.bottom());
 
@@ -1076,12 +1085,14 @@ void DrawChannel::DrawAnnotations(const DataFile & data, bool hasSamples)
         }
 
         mPainter.drawText(bounds.bottomLeft(), anno.txt());
+        mPainter.drawLine(bounds.bottomLeft(), QPoint(bounds.left(), bottom));
         lastBounds = bounds;
     }
 }
 
 void DrawChannel::DrawPixelWise(const DataFile & data)
 {
+    mPainter.setPen(mDefaultPen);
     const int indexEnd = static_cast<int>(data.samples().size()) - 1;
     const int xpxEnd = mRect.right() + 2;
         
@@ -1123,6 +1134,8 @@ void DrawChannel::DrawSampleWise(const DataFile & data)
     const int indexEnd = (indexLast > indexMax) ? indexMax : indexLast;
     if ((indexEnd - indexBegin) < 2) return;
 
+    QPen linePen = mDefaultPen;
+    const QPen pointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     const bool drawPoints = mTranslate.samplesPerPixel() < 0.5;
     auto indexNow = indexBegin;
     auto now  = data.samples().begin() + indexNow;
@@ -1134,11 +1147,11 @@ void DrawChannel::DrawSampleWise(const DataFile & data)
 
     if (drawPoints)
     {
-        mPainter.setPen(mPointPen);
+        linePen.setColor(Qt::gray);
+        mPainter.setPen(pointPen);
         mPainter.drawPoint(xold, yold);
-        mLinePen.setColor(Qt::gray);
-        mPainter.setPen(mLinePen);
     }
+        
 
     while (now < end)
     {
@@ -1146,15 +1159,15 @@ void DrawChannel::DrawSampleWise(const DataFile & data)
         auto xnow = mTranslate.sampleIndexToXpx(indexNow);
         ++now;
         ++indexNow;
+        mPainter.setPen(linePen);
         mPainter.drawLine(xold, yold, xnow, ynow);
         xold = xnow;
         yold = ynow;
 
         if (drawPoints)
         {
-            mPainter.setPen(mPointPen);
+            mPainter.setPen(pointPen);
             mPainter.drawPoint(xnow, ynow);
-            mPainter.setPen(mLinePen);
         }
     }
 }
