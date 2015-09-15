@@ -82,11 +82,11 @@ public:
         // some data files contain more multiple channels
         QRegularExpression re(QString("interleave\\s(\\d+)\\s(\\d+)\\s(\\d+)"));
         QRegularExpressionMatch match = re.match(txt);
-        if (!match.hasMatch()) {qDebug() << "XXXXXXXXXX"; return;}
+        if (!match.hasMatch()) {return;}
         mBlockSize = match.captured(1).toInt();
         mChannelOffset = match.captured(2).toInt();
         mChannelSize = match.captured(3).toInt();
-        qDebug() << mBlockSize << mChannelOffset << mChannelSize;
+        qDebug() << "Interleave" << mBlockSize << mChannelOffset << mChannelSize;
     }
 
     void next()
