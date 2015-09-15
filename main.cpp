@@ -61,6 +61,47 @@ public:
     const QString & txt() const {return mTxt;}
 };
 
+class Interleave
+{
+private:
+    int mBlockSize;
+    int mChannelOffset;
+    int mChannelSize;
+    int mPosition;
+public:
+    Interleave():
+        mBlockSize(1),
+        mChannelOffset(0),
+        mChannelSize(1),
+        mPosition(0)
+    {
+    }
+
+    void parse(const QString & txt)
+    {
+        // some data files contain more multiple channels
+        QRegularExpression re(QString("interleave\\s(\\d+)\\s(\\d+)\\s(\\d+)"));
+        QRegularExpressionMatch match = re.match(txt);
+        if (!match.hasMatch()) {qDebug() << "XXXXXXXXXX"; return;}
+        mBlockSize = match.captured(1).toInt();
+        mChannelOffset = match.captured(2).toInt();
+        mChannelSize = match.captured(3).toInt();
+        qDebug() << mBlockSize << mChannelOffset << mChannelSize;
+    }
+
+    void next()
+    {
+        ++mPosition;
+        if (mPosition >= mBlockSize) {mPosition = 0;}
+    }
+
+    bool isUsed() const
+    {
+        if (mPosition < mChannelOffset) {return false;}
+        return (mPosition < (mChannelOffset + mChannelSize));
+    }
+};
+
 class InfoParser
 {
 private:
@@ -173,6 +214,7 @@ private:
     QString mOper;
     QString mUnit;
     QString mLabel;
+    Interleave mInterleave;
     int mErrors;
     int mSampleMask;
     int mSampleOffset;
@@ -393,7 +435,12 @@ private:
                 lsb = static_cast<int>(sample & mask) - mSampleOffset;
             }
 
-            mSamples.push_back(lsb);
+            if (mInterleave.isUsed())
+            {
+                mSamples.push_back(lsb);
+            }
+
+            mInterleave.next();
         }
 
         read.close();
@@ -467,6 +514,8 @@ private:
         if (parser.tag("leu16")) {mIsSigned = false; mIsBigEndian = false;}
         if (parser.tag("bei16")) {mIsSigned = true;  mIsBigEndian = true;}
         if (parser.tag("lei16")) {mIsSigned = true;  mIsBigEndian = false;}
+
+        mInterleave.parse(parser.remaining());
     }
 
     void error()
