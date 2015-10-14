@@ -489,7 +489,7 @@ private:
 
         QString dst;
         if (done && parser.value(dst, "anno_file")) {mAnno = dst;}
-        if (done && parser.value(dst, "s-mask")) {mSampleMask = dst.toInt(&done, 0);}
+        if (done && parser.value(dst, "s-mask")) {mSampleMask = dst.toInt(&done, 16);}
         if (done && parser.value(dst, "offset")) {mSampleOffset = dst.toInt(&done, 0);}
         if (done && parser.value(dst, "delay")) {mDelay = dst.toDouble(&done) / 1000.0;}
         if (done && parser.value(dst, "gain")) {gainDividend = dst.toDouble(&done);}
@@ -941,6 +941,8 @@ public:
             const UnitScale & timeScale,
             const UnitScale & valueScale);
 private:
+    struct ColorSchema {QColor dark; QColor normal;};
+    void SetColorSchema(size_t index);
     void DrawDecorations(const DataChannel & chan);
     void DrawSampleWise(const DataFile & data);
     void DrawPixelWise(const DataFile & data);
@@ -951,7 +953,8 @@ private:
     Translate mTranslate;
     QPainter mPainter;
     MeasurePerformance mMeasurePerformance;
-    const QPen mDefaultPen;
+    QPen mDefaultPen;
+    ColorSchema mColorSchema;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1044,7 +1047,7 @@ private:
 ////////////////////////////////////////////////////////////////////////////////
 // class DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
-
+    
 DrawChannel::DrawChannel(QWidget & parent,
             const QRect & rect,
             const DataChannel & chan,
@@ -1055,7 +1058,8 @@ DrawChannel::DrawChannel(QWidget & parent,
     mTranslate(timeScale, valueScale),
     mPainter(&parent),
     mMeasurePerformance("DrawChannel"),
-    mDefaultPen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)
+    mDefaultPen(Qt::magenta, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
+    mColorSchema()
 {
     QFont font = parent.font();
     if (font.pointSize() > 8) {font.setPointSize(8);}
@@ -1064,8 +1068,10 @@ DrawChannel::DrawChannel(QWidget & parent,
     mPainter.setFont(font);
     mPainter.fillRect(mRect, Qt::white);
 
+    size_t dataIndex = 0;
     for (auto & data:chan.files())
     {
+        SetColorSchema(dataIndex++);
         mTranslate.setData(data);
         mTranslate.debug(rect);
 
@@ -1089,13 +1095,15 @@ DrawChannel::DrawChannel(QWidget & parent,
 
 void DrawChannel::DrawDecorations(const DataChannel & chan)
 {
-    mPainter.setPen(mDefaultPen);
     const int flags = Qt::TextSingleLine|Qt::TextDontClip;
     QRect lastBounds(mParent.rect());
 
+    size_t dataIndex = 0;
     for (auto & data:chan.files())
     {
+        SetColorSchema(dataIndex++);
         const QRect bounds = mPainter.boundingRect(lastBounds, flags, data.label());
+        mPainter.setPen(mDefaultPen);
         mPainter.drawText(bounds.bottomLeft(), data.label());
         lastBounds.moveTop(bounds.bottom());
     }
@@ -1184,7 +1192,7 @@ void DrawChannel::DrawSampleWise(const DataFile & data)
     if ((indexEnd - indexBegin) < 2) return;
 
     QPen linePen = mDefaultPen;
-    const QPen pointPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    const QPen pointPen(mColorSchema.dark, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     const bool drawPoints = mTranslate.samplesPerPixel() < 0.5;
     auto indexNow = indexBegin;
     auto now  = data.samples().begin() + indexNow;
@@ -1196,7 +1204,7 @@ void DrawChannel::DrawSampleWise(const DataFile & data)
 
     if (drawPoints)
     {
-        linePen.setColor(Qt::gray);
+        linePen.setColor(mColorSchema.normal);
         mPainter.setPen(pointPen);
         mPainter.drawPoint(xold, yold);
     }
@@ -1219,6 +1227,20 @@ void DrawChannel::DrawSampleWise(const DataFile & data)
             mPainter.drawPoint(xnow, ynow);
         }
     }
+}
+
+void DrawChannel::SetColorSchema(size_t index)
+{
+    static const std::vector<ColorSchema> schema = {
+        {Qt::black, Qt::gray},
+        {Qt::darkGreen, Qt::green},
+        {Qt::darkRed, Qt::red},
+        {Qt::darkBlue, Qt::blue},
+    };
+
+    if (index >= schema.size()) {index = 0;}
+    mColorSchema = schema[index];
+    mDefaultPen.setColor(mColorSchema.dark);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1832,7 +1854,7 @@ TEST(DataFile, parse)
     EXPECT_TRUE(IsEqual(0.25, a.gain()));
     EXPECT_EQ("mv", a.unit());
     EXPECT_EQ("Ecg 1", a.label());
-    EXPECT_EQ(32, a.sampleMask());
+    EXPECT_EQ(0x32, a.sampleMask());
     EXPECT_EQ(16, a.sampleOffset());
 
     DataFile b("dummy 100 0.5");
