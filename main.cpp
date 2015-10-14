@@ -329,6 +329,7 @@ public:
     void minus(const DataFile & other)
     {
         std::vector<int> result;
+        mLabel = label() + "-" + other.label();
         mDelay = 0;
         Second time = 0;
         size_t index = 0;
