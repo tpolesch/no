@@ -335,18 +335,14 @@ public:
 
         while (time < duration())
         {
-            const double a = at(time);
-            const double b = other.at(time);
+            double a = at(time);
+            double b = other.at(time);
 
             ++index;
             time = static_cast<Second>(index) / sps();
 
-            if (isnan(a) || (isnan(b)))
-            {
-                if (result.size() > 0) {break;}
-                mDelay = time;
-                continue;
-            }
+            if (isnan(a)) {a = 0;}
+            if (isnan(b)) {b = 0;}
 
             const int lsb = static_cast<int>((a - b) / gain());
             result.push_back(lsb);
@@ -541,7 +537,7 @@ public:
         mFiles.push_back(file);
     }
 
-    void minus(DataFile & file)
+    void minus(const DataFile & file)
     {
         if (files().size() < 1) return;
         const size_t index = files().size() - 1;
@@ -644,7 +640,7 @@ public:
                 qDebug() << "Could not parse:" << file.txt();
                 continue;
             }
-
+                
             if (file.isOperator(">")) create(file);
             if (file.isOperator("+")) plus(file);
             if (file.isOperator("-")) minus(file);
