@@ -898,12 +898,12 @@ public:
 
     int sampleIndexToXpx(double idx) const
     {
-        return secondToXpx(idx / mSps + mDelay);
+        return secondToXpx(idx / mSps);
     }
 
     int secondToXpx(Second sec) const
     {
-        return mX.toPixel(sec);
+        return mX.toPixel(sec + mDelay);
     }
 
     double ypxToUnit(int ypx) const
