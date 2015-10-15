@@ -329,8 +329,6 @@ public:
     void minus(const DataFile & other)
     {
         std::vector<int> result;
-        mLabel = label() + "-" + other.label();
-        mDelay = 0;
         Second time = 0;
         size_t index = 0;
 
@@ -338,18 +336,17 @@ public:
         {
             double a = at(time);
             double b = other.at(time);
-
-            ++index;
-            time = static_cast<Second>(index) / sps();
-
             if (isnan(a)) {a = 0;}
             if (isnan(b)) {b = 0;}
-
             const int lsb = static_cast<int>((a - b) / gain());
             result.push_back(lsb);
+            ++index;
+            time = static_cast<Second>(index) / sps();
         }
 
         mSamples = result;
+        mDelay = 0;
+        mLabel = label() + "-" + other.label();
         updateMinMax();
     }
 private:
