@@ -1360,29 +1360,20 @@ public:
         return result;
     }
 
-    QString FormatTime(double time) const
+    QString FormatTime(double sec) const
     {
-        double abs = std::fabs(time);
         QString result;
         QTextStream ss(&result);
+        const double msec = 1000.0 * sec;
+        const int hour = static_cast<int>(sec) / 3600;
+        sec -= hour * 3600;
+        const int min = static_cast<int>(sec) / 60;
+        sec -= min * 60;
 
-        if (abs < 1.0)
-        {
-            ss << time * 1000.0 << "ms";
-        }
-        else if (abs > 3600.0)
-        {
-            ss << time / 3600.0 << "h";
-        }
-        else if (abs > 60.0)
-        {
-            ss << time / 60.0 << "min";
-        }
-        else
-        {
-            ss << time << "s";
-        }
-
+        if (hour != 0) {ss << hour << "h";}
+        ss << min << "m";
+        ss << sec << "s (";
+        ss << msec << "ms)";
         return result;
     }
 
