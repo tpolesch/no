@@ -579,6 +579,12 @@ public:
        return mFiles;
     }
 
+    QString unit() const
+    {
+        if (files().size() < 1) return "";
+        return files()[0].unit();
+    }
+
     double min() const {return mMin;}
     double max() const {return mMax;}
     Second duration() const {return mDuration;}
@@ -691,6 +697,7 @@ private:
 class UnitScale
 {
 private:
+    const QString mUnit;
     const double mMillimeterPerUnit;
     double mPixelPerMillimeter;
     double mMinData;
@@ -700,7 +707,8 @@ private:
     int mPixelSize;
     int mZoom;
 public:
-    explicit UnitScale(double speed):
+    explicit UnitScale(double speed, const QString & unit):
+        mUnit(unit),
         mMillimeterPerUnit(speed),
         mPixelPerMillimeter(0),
         mMinData(0),
@@ -744,6 +752,11 @@ public:
     void setFocusPixel(int px)
     {
         setFocus(fromPixel(px));
+    }
+
+    double millimeterToPixel(double mm) const
+    {
+        return mPixelPerMillimeter * mm;
     }
 
     double pixelPerUnit() const
@@ -841,6 +854,7 @@ public:
     double focus() const {return mFocus;}
     double min() const {return mMin;}
     double max() const {return min() + unitSize();}
+    const QString & unit() const {return mUnit;}
 };
 
 class Translate
@@ -884,6 +898,16 @@ public:
     void setGain(double gain)
     {
         mGain = gain;
+    }
+
+    const UnitScale & X() const
+    {
+        return mX;
+    }
+
+    const UnitScale & Y() const
+    {
+        return mY;
     }
 
     double samplesPerPixel() const
@@ -941,6 +965,7 @@ private:
     void DrawSampleWise(const DataFile & data);
     void DrawPixelWise(const DataFile & data);
     void DrawAnnotations(const DataFile & data);
+    void DrawRulers();
 
     QWidget & mParent;
     const QRect & mRect;
@@ -1085,6 +1110,7 @@ DrawChannel::DrawChannel(QWidget & parent,
     }
 
     DrawDecorations(chan);
+    DrawRulers();
 }
 
 void DrawChannel::DrawDecorations(const DataChannel & chan)
@@ -1101,6 +1127,32 @@ void DrawChannel::DrawDecorations(const DataChannel & chan)
         mPainter.drawText(bounds.bottomLeft(), data.label());
         lastBounds.moveTop(bounds.bottom());
     }
+}
+
+void DrawChannel::DrawRulers()
+{
+    const QPen rulerPen(Qt::lightGray, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    mPainter.setPen(rulerPen);
+    const UnitScale & xs = mTranslate.X();
+    const UnitScale & ys = mTranslate.Y();
+    const double xmm = 25;
+    const double ymm = 10;
+    const int x1 = mRect.right() - 5;
+    const int y1 = mRect.bottom() - 5;
+    const int x2 = x1 - xs.millimeterToPixel(xmm);
+    const int y2 = y1 - ys.millimeterToPixel(ymm);
+    mPainter.drawLine(QPoint(x1, y1), QPoint(x2, y1));
+    mPainter.drawLine(QPoint(x1, y1), QPoint(x1, y2));
+    mPainter.drawLine(QPoint(x2, (y1 - 3)), QPoint(x2, (y1 + 3)));
+    mPainter.drawLine(QPoint((x1 - 3), y2), QPoint((x1 + 3), y2));
+    
+    const double xu = xmm / xs.mmPerUnit();
+    const double yu = ymm / ys.mmPerUnit();
+    const QString xt = QString::number(xu) + xs.unit();
+    const QString yt = QString::number(yu) + ys.unit();
+    const QRect yb = mPainter.fontMetrics().boundingRect(yt);
+    mPainter.drawText(QPoint((x1 - yb.width() - 3), (y2 + yb.height())), yt);
+    mPainter.drawText(QPoint((x2 + 3), y1 - 3), xt);
 }
 
 void DrawChannel::DrawAnnotations(const DataFile & data)
@@ -1332,8 +1384,8 @@ public:
     explicit GuiWave(QWidget * parent, const DataChannel & data, double seconds):
         QWidget(parent),
         mData(data),
-        mTimeScale(25.0),
-        mValueScale(10.0)
+        mTimeScale(25.0, "s"),
+        mValueScale(10.0, data.unit())
     {
         mTimeScale.setXResolution();
         mTimeScale.setPixelSize(width());
@@ -1346,17 +1398,11 @@ public:
         setFocusPolicy(Qt::StrongFocus);
     }
 
-    QString ValueUnit() const
-    {
-        if (mData.files().size() < 1) return "";
-        return mData.files()[0].unit();
-    }
-
     QString FormatValue(double value) const
     {
         QString result;
         QTextStream ss(&result);
-        ss << value << ValueUnit();
+        ss << value << mValueScale.unit();
         return result;
     }
 
@@ -1402,8 +1448,8 @@ public:
         QString result;
         QTextStream s(&result);
         s << "zoom = ";
-        s << mTimeScale.mmPerUnit() << "mm/s, ";
-        s << mValueScale.mmPerUnit() << "mm/" << ValueUnit();
+        s << mTimeScale.mmPerUnit() << "mm/" << mTimeScale.unit() << ", ";
+        s << mValueScale.mmPerUnit() << "mm/" << mValueScale.unit();
         return result;
     }
 
@@ -1858,7 +1904,7 @@ TEST(DataFile, parse)
 
 TEST(UnitScale, xy)
 {
-    UnitScale x(25);
+    UnitScale x(25, "s");
     x.setPixelPerMillimeter(40, 10);
     x.setPixelSize(420);
     x.setData(0, 4);
@@ -1900,7 +1946,7 @@ TEST(UnitScale, xy)
     EXPECT_TRUE(IsEqual(1.05, x.min()));
     EXPECT_TRUE(IsEqual(5.25, x.max()));
 
-    UnitScale y(10);
+    UnitScale y(10, "mV");
     y.setPixelPerMillimeter(5, 1);
     y.setPixelSize(500);
     y.setData(-1, 1);
