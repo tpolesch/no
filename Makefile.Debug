@@ -14,7 +14,7 @@ CXX           = g++
 DEFINES       = -DIS_DEBUG_BUILD -DQT_WIDGETS_LIB -DQT_GUI_LIB -DQT_CORE_LIB
 CFLAGS        = -m64 -pipe -g -Wall -W -D_REENTRANT -fPIE $(DEFINES)
 CXXFLAGS      = -m64 -pipe -Wall -Wextra -pedantic -g -std=c++0x -Wall -W -D_REENTRANT -fPIE $(DEFINES)
-INCPATH       = -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++-64 -I. -I/nfs/bbrdsrv1/storage/m5/sw/utility/20.32work/include -I/usr/include/qt5 -I/usr/include/qt5/QtWidgets -I/usr/include/qt5/QtGui -I/usr/include/qt5/QtCore -Idebug
+INCPATH       = -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++-64 -I. -I/nfs/bbrdsrv1/storage/m5/sw/utility/21.08work/include -I/usr/include/qt5 -I/usr/include/qt5/QtWidgets -I/usr/include/qt5/QtGui -I/usr/include/qt5/QtCore -Idebug
 LINK          = g++
 LFLAGS        = -m64
 LIBS          = $(SUBLIBS) -L/usr/X11R6/lib64 -lQt5Widgets -L/usr/lib/x86_64-linux-gnu -lQt5Gui -lQt5Core -lGL -lpthread 
@@ -73,8 +73,6 @@ DIST          = /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/spec_pre.prf \
 		/usr/lib/x86_64-linux-gnu/qt5/mkspecs/modules/qt_lib_platformsupport_private.pri \
 		/usr/lib/x86_64-linux-gnu/qt5/mkspecs/modules/qt_lib_printsupport.pri \
 		/usr/lib/x86_64-linux-gnu/qt5/mkspecs/modules/qt_lib_printsupport_private.pri \
-		/usr/lib/x86_64-linux-gnu/qt5/mkspecs/modules/qt_lib_script.pri \
-		/usr/lib/x86_64-linux-gnu/qt5/mkspecs/modules/qt_lib_scripttools.pri \
 		/usr/lib/x86_64-linux-gnu/qt5/mkspecs/modules/qt_lib_sql.pri \
 		/usr/lib/x86_64-linux-gnu/qt5/mkspecs/modules/qt_lib_sql_private.pri \
 		/usr/lib/x86_64-linux-gnu/qt5/mkspecs/modules/qt_lib_testlib.pri \
@@ -614,8 +612,8 @@ debug/main.moc: /usr/include/qt5/QtWidgets/QtWidgets \
 		/usr/include/qt5/QtWidgets/qtoolbutton.h \
 		/usr/include/qt5/QtWidgets/qtwidgetsversion.h \
 		/usr/include/qt5/QtCore/QDebug \
-		/nfs/bbrdsrv1/storage/m5/sw/utility/20.32work/include/util/LightTestImplementation.h \
-		/nfs/bbrdsrv1/storage/m5/sw/utility/20.32work/include/util/LightTest.h \
+		/nfs/bbrdsrv1/storage/m5/sw/utility/21.08work/include/util/LightTestImplementation.h \
+		/nfs/bbrdsrv1/storage/m5/sw/utility/21.08work/include/util/LightTest.h \
 		main.cpp
 	/usr/lib/x86_64-linux-gnu/qt5/bin/moc $(DEFINES) $(INCPATH) -I/usr/include/c++/4.8 -I/usr/include/x86_64-linux-gnu/c++/4.8 -I/usr/include/c++/4.8/backward -I/usr/lib/gcc/x86_64-linux-gnu/4.8/include -I/usr/local/include -I/usr/lib/gcc/x86_64-linux-gnu/4.8/include-fixed -I/usr/include/x86_64-linux-gnu -I/usr/include main.cpp -o debug/main.moc
 
@@ -1068,8 +1066,8 @@ debug/main.o: main.cpp /usr/include/qt5/QtWidgets/QtWidgets \
 		/usr/include/qt5/QtWidgets/qtoolbutton.h \
 		/usr/include/qt5/QtWidgets/qtwidgetsversion.h \
 		/usr/include/qt5/QtCore/QDebug \
-		/nfs/bbrdsrv1/storage/m5/sw/utility/20.32work/include/util/LightTestImplementation.h \
-		/nfs/bbrdsrv1/storage/m5/sw/utility/20.32work/include/util/LightTest.h \
+		/nfs/bbrdsrv1/storage/m5/sw/utility/21.08work/include/util/LightTestImplementation.h \
+		/nfs/bbrdsrv1/storage/m5/sw/utility/21.08work/include/util/LightTest.h \
 		debug/main.moc
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o debug/main.o main.cpp
 
