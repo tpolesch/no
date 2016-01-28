@@ -1607,6 +1607,7 @@ public:
                     this, SLOT(slotWaveSelected(GuiWave *)));
         }
         setLayout(layout);
+        if (mChannels.size() > 0) {slotWaveSelected(mChannels[0]);}
     }
 
     void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn(); }; statusZoom();}

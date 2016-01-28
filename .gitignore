@@ -5,4 +5,5 @@ Makefile.Debug
 Makefile.Release
 debug/
 release/
+*.swp
 
