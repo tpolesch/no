@@ -1222,8 +1222,8 @@ void DrawChannel::DrawPixelWise(const DataFile & data)
 
 void DrawChannel::DrawSampleWise(const DataFile & data)
 {
-    const int indexLeft = mTranslate.xpxToSampleIndex(mRect.left()) - 2;
-    const int indexRight = mTranslate.xpxToSampleIndex(mRect.right()) + 2;
+    const int indexLeft = mTranslate.xpxToSampleIndex(mRect.left() - 2) - 2;
+    const int indexRight = mTranslate.xpxToSampleIndex(mRect.right() + 2) + 2;
     const int indexBegin = data.clipIndex(indexLeft);
     const int indexEnd = data.clipIndex(indexRight);
     if ((indexEnd - indexBegin) < 2) return;
