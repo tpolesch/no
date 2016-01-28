@@ -740,7 +740,7 @@ public:
     void setPixelSize(int px)
     {
         mPixelSize = px;
-        update();
+        autoSize();
     }
 
     void setFocus(double unit)
@@ -785,17 +785,23 @@ public:
     {
         mMinData = minData;
         mMaxData = maxData;
-        update();
+        autoSize();
     }
 
-    void update()
+    void autoSize()
     {
+        qDebug() << "autoSize" << mZoom << mMin;
         const double range = mMaxData - mMinData;
         const double offset = (mMaxData + mMinData) / 2;
         mZoom = 0;
-        while (range > unitSize()) {zoomOut();}
+        if (range > 0)
+        {
+            while (range < unitSize()) {zoomIn();}
+            while (range > unitSize()) {zoomOut();}
+        }
         mMin = offset - unitSize() / 2;
         mFocus = (min() + max()) / 2;
+        qDebug() << "autoSize done" << mZoom;
     }
 
     void zoomIn()
@@ -1497,6 +1503,7 @@ public:
         mValueScale.setFocus(t.ypxToUnit(ypx));
     }
 
+    void autoSize() {mValueScale.autoSize(); update();}
     void xzoomIn()  {mTimeScale.zoomIn(); update();}
     void xzoomOut() {mTimeScale.zoomOut(); update();}
     void yzoomIn()  {mValueScale.zoomIn(); update();}
@@ -1595,6 +1602,7 @@ public:
         setLayout(layout);
     }
 
+    void autoSize() {for (auto & chan:mChannels) {chan->autoSize(); }; statusZoom();}
     void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn(); }; statusZoom();}
     void xzoomOut() {for (auto & chan:mChannels) {chan->xzoomOut();}; statusZoom();}
     void left()     {for (auto & chan:mChannels) {chan->left();    }; statusTime();}
@@ -1703,7 +1711,9 @@ private:
 private slots:
     void Open()     {Open(QFileDialog::getOpenFileName(this, QString("Open"), QDir::currentPath()));}
     void Reload()   {Open(mSetup.fileName);}
+    void Vim()      {const int rv =  system(QString(QString("gvim ") + mSetup.fileName).toStdString().c_str());}
     void Exit()     {close();}
+    void autoSize() {if (mGui) {mGui->autoSize();}}
     void xzoomIn()  {if (mGui) {mGui->xzoomIn();}}
     void xzoomOut() {if (mGui) {mGui->xzoomOut();}}
     void yzoomIn()  {if (mGui) {mGui->yzoomIn();}}
@@ -1732,9 +1742,11 @@ public:
         QMenu * fileMenu = menuBar()->addMenu(tr("&File"));
         ACTION(fileMenu, "&Open...", Open, QKeySequence::Open);
         ACTION(fileMenu, "&Reload", Reload, Qt::Key_R);
+        ACTION(fileMenu, "&Vim", Vim, Qt::Key_V);
         ACTION(fileMenu, "&Exit", Exit, QKeySequence::Quit);
 
         QMenu * viewMenu = menuBar()->addMenu(tr("&View"));
+        ACTION(viewMenu, "Auto Size", autoSize, Qt::Key_A);
         ACTION(viewMenu, "X-Zoom-In", xzoomIn, Qt::Key_X);
         ACTION(viewMenu, "X-Zoom-Out", xzoomOut, Qt::Key_X + Qt::SHIFT);
         ACTION(viewMenu, "Y-Zoom-In", yzoomIn, Qt::Key_Y);
