@@ -1,1 +1,2 @@
 wave.dat 500 1 mV "wave" gain=0.005 offset=8192 s-mask=0x3fff anno_file=wave.anno
++wave.dat 500 1 mV "wave" gain=0.003 offset=8192 s-mask=0x3fff delay=4500

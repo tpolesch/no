@@ -1,1 +1,10 @@
--I/usr/share/qt4/mkspecs/linux-g++-64 -I. -I/usr/include/qt4/QtCore -I/usr/include/qt4/QtGui -I/usr/include/qt4 -I.
+-std=c++0x
+-I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++-64
+-I.
+-I/nfs/bbrdsrv1/storage/m5/sw/utility/Current/include
+-I/usr/include/qt5
+-I/usr/include/qt5/QtWidgets
+-I/usr/include/qt5/QtGui
+-I/usr/include/qt5/QtCore
+-Irelease
+

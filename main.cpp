@@ -218,8 +218,6 @@ private:
     int mErrors;
     int mSampleMask;
     int mSampleOffset;
-    int mSampleMin;
-    int mSampleMax;
     bool mIsSigned;
     bool mIsBigEndian;
 public:
@@ -241,8 +239,6 @@ public:
         mErrors(0),
         mSampleMask(0xffff),
         mSampleOffset(0),
-        mSampleMin(0),
-        mSampleMax(0),
         mIsSigned(true),
         mIsBigEndian(true)
     {
@@ -261,16 +257,6 @@ public:
         return mSampleOffset;
     }
 
-    double min() const
-    {
-        return gain() * mSampleMin;
-    }
-    
-    double max() const
-    {
-        return gain() * mSampleMax;
-    }
-    
     double gain() const
     {
         return mGain;
@@ -347,8 +333,41 @@ public:
         mSamples = result;
         mDelay = 0;
         mLabel = label() + "-" + other.label();
-        updateMinMax();
     }
+
+    int clipIndex(int index) const
+    {
+        const int max = static_cast<int>(samples().size()) - 1;
+        if (index > max) return max;
+        if (index < 0) return 0;
+        return index;
+    }
+
+    struct MinMax {double min; double max;};
+    MinMax minmax(int indexBegin, int indexEnd) const
+    {
+        MinMax result = {0, 0};
+        if (samples().size() < 1) return result;
+
+        Q_ASSERT(indexBegin <= indexEnd);
+        auto begin = samples().begin() + clipIndex(indexBegin);
+        auto end = samples().begin() + clipIndex(indexEnd);
+        auto mm = std::minmax_element(begin, end);
+        auto one = gain() * (*mm.first);
+        auto two = gain() * (*mm.second);
+
+        if (gain() > 0)
+        {
+            result.min = one;
+            result.max = two;
+            return result;
+        }
+
+        result.max = two;
+        result.min = one;
+        return result;
+    }
+
 private:
     double at(Second sec) const
     {
@@ -438,31 +457,6 @@ private:
         }
 
         read.close();
-        updateMinMax();
-    }
-
-    void updateMinMax()
-    {
-        if (samples().size() < 1)
-        {
-            mSampleMin = 0;
-            mSampleMax = 0;
-        }
-        else
-        {
-            auto minmax = std::minmax_element(samples().begin(), samples().end());
-
-            if (gain() > 0)
-            {
-                mSampleMin = *minmax.first;
-                mSampleMax = *minmax.second;
-            }
-            else
-            {
-                mSampleMax = *minmax.first;
-                mSampleMin = *minmax.second;
-            }
-        }
     }
 
     void parseInfo()
@@ -525,8 +519,6 @@ private:
 class DataChannel
 {
 private:
-    double mMin;
-    double mMax;
     Second mDuration;
     std::vector<DataFile> mFiles;
 public:
@@ -546,20 +538,14 @@ public:
     {
         if (files().size() < 1)
         {
-            mMin = 0;
-            mMax = 0;
             mDuration = 0;
             return;
         }
 
-        mMin = files()[0].min();
-        mMax = files()[0].max();
         mDuration = files()[0].duration();
 
         for (auto & file:files())
         {
-            if (mMin > file.min()) {mMin = file.min();}
-            if (mMax < file.max()) {mMax = file.max();}
             if (mDuration < file.duration()) {mDuration = file.duration();}
         }
     }
@@ -585,8 +571,6 @@ public:
         return files()[0].unit();
     }
 
-    double min() const {return mMin;}
-    double max() const {return mMax;}
     Second duration() const {return mDuration;}
 };
 
@@ -739,13 +723,14 @@ public:
 
     void setPixelSize(int px)
     {
+        qDebug() << "UnitScale::setPixelSize" << mPixelSize << "->" << px;
         mPixelSize = px;
-        autoSize();
+        updateAutoZoom();
     }
 
     void setFocus(double unit)
     {
-        qDebug() << "setFocus:" << unit << "min:" << min() << "max:" << max();
+        qDebug() << "UnitScale::setFocus" << unit << "min:" << min() << "max:" << max();
         mFocus = unit;
     }
 
@@ -781,16 +766,16 @@ public:
         return min() + pixelToUnit(px);
     }
 
-    void setData(double minData, double maxData)
+    void autoZoom(double min, double max)
     {
-        mMinData = minData;
-        mMaxData = maxData;
-        autoSize();
+        qDebug() << "UnitScale::autoZoom" << min << max;
+        mMinData = min;
+        mMaxData = max;
+        updateAutoZoom();
     }
-
-    void autoSize()
+private:
+    void updateAutoZoom()
     {
-        qDebug() << "autoSize" << mZoom << mMin;
         const double range = mMaxData - mMinData;
         const double offset = (mMaxData + mMinData) / 2;
         mZoom = 0;
@@ -801,19 +786,20 @@ public:
         }
         mMin = offset - unitSize() / 2;
         mFocus = (min() + max()) / 2;
-        qDebug() << "autoSize done" << mZoom;
     }
-
+public:
     void zoomIn()
     {
         ++mZoom;
         mMin += (mFocus - min()) / 2;
+        qDebug() << "UnitScale::zoomIn" << mZoom;
     }
 
     void zoomOut()
     {
         --mZoom;
         mMin -= (mFocus - min());
+        qDebug() << "UnitScale::zoomOut" << mZoom;
     }
 
     void scrollLeft()
@@ -1143,8 +1129,8 @@ void DrawChannel::DrawRulers()
     const UnitScale & ys = mTranslate.Y();
     const double xmm = 25;
     const double ymm = 10;
-    const int x1 = mRect.right() - 5;
-    const int y1 = mRect.bottom() - 5;
+    const int x1 = mParent.width() - 10;
+    const int y1 = mParent.height() - 10;
     const int x2 = x1 - xs.millimeterToPixel(xmm);
     const int y2 = y1 - ys.millimeterToPixel(ymm);
     mPainter.drawLine(QPoint(x1, y1), QPoint(x2, y1));
@@ -1208,12 +1194,12 @@ void DrawChannel::DrawPixelWise(const DataFile & data)
     for (int xpx = mRect.left(); xpx < xpxEnd; ++xpx)
     {
         int indexFirst = mTranslate.xpxToSampleIndex(xpx);
-        if (indexFirst < 1) indexFirst = 1;
+        if (indexFirst < 0) indexFirst = 0;
         if (indexFirst > indexEnd) return;
 
         int indexLast = mTranslate.xpxToSampleIndex(xpx + 1);
         if (indexLast > indexEnd) indexLast = indexEnd;
-        if (indexLast < 1) continue;
+        if (indexLast < 0) continue;
 
         // 1st line per xpx:
         // - from last sample in previous xpx
@@ -1236,11 +1222,10 @@ void DrawChannel::DrawPixelWise(const DataFile & data)
 
 void DrawChannel::DrawSampleWise(const DataFile & data)
 {
-    const int indexFirst = mTranslate.xpxToSampleIndex(mRect.left());
-    const int indexLast = mTranslate.xpxToSampleIndex(mRect.right() + 2);
-    const int indexBegin = (indexFirst < 0) ? 0 : indexFirst;
-    const int indexMax = static_cast<int>(data.samples().size());
-    const int indexEnd = (indexLast > indexMax) ? indexMax : indexLast;
+    const int indexLeft = mTranslate.xpxToSampleIndex(mRect.left()) - 2;
+    const int indexRight = mTranslate.xpxToSampleIndex(mRect.right()) + 2;
+    const int indexBegin = data.clipIndex(indexLeft);
+    const int indexEnd = data.clipIndex(indexRight);
     if ((indexEnd - indexBegin) < 2) return;
 
     QPen linePen = mDefaultPen;
@@ -1393,13 +1378,14 @@ public:
         mTimeScale(25.0, "s"),
         mValueScale(10.0, data.unit())
     {
+        qDebug() << "GuiWave::ctor";
         mTimeScale.setXResolution();
         mTimeScale.setPixelSize(width());
-        mTimeScale.setData(0, seconds);
+        mTimeScale.autoZoom(0, seconds);
         
         mValueScale.setYResolution();
         mValueScale.setPixelSize(height());
-        mValueScale.setData(data.min(), data.max());
+        yzoomAuto();
 
         setFocusPolicy(Qt::StrongFocus);
     }
@@ -1479,14 +1465,6 @@ public:
     {
         QString result;
         QTextStream s(&result);
-
-        if (mData.files().size() > 0)
-        {
-            const DataFile & file = mData.files()[0];
-            s << "data = {" << FormatValue(file.min());
-            s << ", " << FormatValue(file.max()) << "}, ";
-        }
-
         s << "visible = {" << FormatValue(mValueScale.min());
         s << ", " << FormatValue(mValueScale.max()) << "}";
         return result;
@@ -1503,7 +1481,35 @@ public:
         mValueScale.setFocus(t.ypxToUnit(ypx));
     }
 
-    void autoSize() {mValueScale.autoSize(); update();}
+    void yzoomAuto()
+    {
+        bool first = true;
+        double min = 0;
+        double max = 0;
+        for (auto & data:mData.files())
+        {
+            Translate t(mTimeScale, mValueScale);
+            t.setData(data);
+            auto indexBegin = t.xpxToSampleIndex(0);
+            auto indexEnd = t.xpxToSampleIndex(width());
+            auto mm = data.minmax(indexBegin, indexEnd);
+
+            if (first)
+            {
+                first = false;
+                min = mm.min;
+                max = mm.max;
+                continue;
+            }
+
+            if (min > mm.min) min = mm.min;
+            if (max < mm.max) max = mm.max;
+        }
+
+        mValueScale.autoZoom(min, max);
+        update();
+    }
+
     void xzoomIn()  {mTimeScale.zoomIn(); update();}
     void xzoomOut() {mTimeScale.zoomOut(); update();}
     void yzoomIn()  {mValueScale.zoomIn(); update();}
@@ -1532,6 +1538,7 @@ private:
 
     void resizeEvent(QResizeEvent *) override
     {
+        qDebug() << "GuiWave::resizeEvent";
         mValueScale.setPixelSize(height());
         mTimeScale.setPixelSize(width());
         update();
@@ -1602,15 +1609,15 @@ public:
         setLayout(layout);
     }
 
-    void autoSize() {for (auto & chan:mChannels) {chan->autoSize(); }; statusZoom();}
     void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn(); }; statusZoom();}
     void xzoomOut() {for (auto & chan:mChannels) {chan->xzoomOut();}; statusZoom();}
     void left()     {for (auto & chan:mChannels) {chan->left();    }; statusTime();}
     void right()    {for (auto & chan:mChannels) {chan->right();   }; statusTime();}
-    void yzoomIn()  {if (mSelected) {mSelected->yzoomIn(); }; statusZoom();}
-    void yzoomOut() {if (mSelected) {mSelected->yzoomOut();}; statusZoom();}
-    void up()       {if (mSelected) {mSelected->up();      }; statusValue();}
-    void down()     {if (mSelected) {mSelected->down();    }; statusValue();}
+    void yzoomIn()  {if (mSelected) {mSelected->yzoomIn();  }; statusZoom();}
+    void yzoomOut() {if (mSelected) {mSelected->yzoomOut(); }; statusZoom();}
+    void yzoomAuto(){if (mSelected) {mSelected->yzoomAuto();}; statusZoom();}
+    void up()       {if (mSelected) {mSelected->up();       }; statusValue();}
+    void down()     {if (mSelected) {mSelected->down();     }; statusValue();}
 private:
     void setFocus()
     {
@@ -1711,13 +1718,13 @@ private:
 private slots:
     void Open()     {Open(QFileDialog::getOpenFileName(this, QString("Open"), QDir::currentPath()));}
     void Reload()   {Open(mSetup.fileName);}
-    void Vim()      {const int rv =  system(QString(QString("gvim ") + mSetup.fileName).toStdString().c_str());}
+    void Vim()      {(void)system(QString(QString("gvim ") + mSetup.fileName).toStdString().c_str());}
     void Exit()     {close();}
-    void autoSize() {if (mGui) {mGui->autoSize();}}
     void xzoomIn()  {if (mGui) {mGui->xzoomIn();}}
     void xzoomOut() {if (mGui) {mGui->xzoomOut();}}
     void yzoomIn()  {if (mGui) {mGui->yzoomIn();}}
     void yzoomOut() {if (mGui) {mGui->yzoomOut();}}
+    void yzoomAuto(){if (mGui) {mGui->yzoomAuto();}}
     void left()     {if (mGui) {mGui->left();}}
     void right()    {if (mGui) {mGui->right();}}
     void up()       {if (mGui) {mGui->up();}}
@@ -1746,11 +1753,11 @@ public:
         ACTION(fileMenu, "&Exit", Exit, QKeySequence::Quit);
 
         QMenu * viewMenu = menuBar()->addMenu(tr("&View"));
-        ACTION(viewMenu, "Auto Size", autoSize, Qt::Key_A);
         ACTION(viewMenu, "X-Zoom-In", xzoomIn, Qt::Key_X);
         ACTION(viewMenu, "X-Zoom-Out", xzoomOut, Qt::Key_X + Qt::SHIFT);
         ACTION(viewMenu, "Y-Zoom-In", yzoomIn, Qt::Key_Y);
         ACTION(viewMenu, "Y-Zoom-Out", yzoomOut, Qt::Key_Y + Qt::SHIFT);
+        ACTION(viewMenu, "Y-Zoom-Auto", yzoomAuto, Qt::Key_A);
         ACTION(viewMenu, "Left", left, Qt::Key_Left);
         ACTION(viewMenu, "Right", right, Qt::Key_Right);
         ACTION(viewMenu, "Up", up, Qt::Key_Up);
@@ -1884,7 +1891,7 @@ TEST(InfoParser, oper)
 
 inline bool IsEqual(double a, double b)
 {
-    if (std::fabs(a - b) < 0.00001) return true;
+    if (std::abs(a - b) < 0.00001) return true;
     qDebug() << "IsEqual" << a << b;
     return false;
 }
@@ -1919,7 +1926,7 @@ TEST(UnitScale, xy)
     UnitScale x(25, "s");
     x.setPixelPerMillimeter(40, 10);
     x.setPixelSize(420);
-    x.setData(0, 4);
+    x.autoZoom(0, 4);
     EXPECT_TRUE(IsEqual(105.0, x.mmSize()));
     EXPECT_TRUE(IsEqual(  1.0, x.zoomFactor()));
     EXPECT_TRUE(IsEqual( 25.0, x.mmPerUnit()));
@@ -1934,7 +1941,7 @@ TEST(UnitScale, xy)
     EXPECT_EQ(210, x.toPixel(2.0));
     EXPECT_EQ(420, x.toPixel(4.1));
 
-    x.setData(0, 5);
+    x.autoZoom(0, 5);
     EXPECT_TRUE(IsEqual( 0.5, x.zoomFactor()));
     EXPECT_TRUE(IsEqual(12.5, x.mmPerUnit()));
     EXPECT_TRUE(IsEqual( 8.4, x.unitSize()));
@@ -1961,20 +1968,20 @@ TEST(UnitScale, xy)
     UnitScale y(10, "mV");
     y.setPixelPerMillimeter(5, 1);
     y.setPixelSize(500);
-    y.setData(-1, 1);
+    y.autoZoom(-1, 1);
     EXPECT_TRUE(IsEqual(100, y.mmSize()));
-    EXPECT_TRUE(IsEqual(10, y.unitSize()));
-    EXPECT_TRUE(IsEqual(1, y.zoomFactor()));
-    EXPECT_TRUE(IsEqual(5, y.max()));
-    EXPECT_TRUE(IsEqual(-5, y.min()));
+    EXPECT_TRUE(IsEqual(2.5, y.unitSize()));
+    EXPECT_TRUE(IsEqual(4, y.zoomFactor()));
+    EXPECT_TRUE(IsEqual(1.25, y.max()));
+    EXPECT_TRUE(IsEqual(-1.25, y.min()));
     
-    y.setData(-1, 3);
-    EXPECT_TRUE(IsEqual(10, y.unitSize()));
-    EXPECT_TRUE(IsEqual(1, y.zoomFactor()));
-    EXPECT_TRUE(IsEqual(6, y.max()));
-    EXPECT_TRUE(IsEqual(-4, y.min()));
+    y.autoZoom(-1, 3);
+    EXPECT_TRUE(IsEqual(5, y.unitSize()));
+    EXPECT_TRUE(IsEqual(2, y.zoomFactor()));
+    EXPECT_TRUE(IsEqual(3.5, y.max()));
+    EXPECT_TRUE(IsEqual(-1.5, y.min()));
     
-    y.setData(-6, 12);
+    y.autoZoom(-6, 12);
     EXPECT_TRUE(IsEqual(20, y.unitSize()));
     EXPECT_TRUE(IsEqual(0.5, y.zoomFactor()));
     EXPECT_TRUE(IsEqual(13, y.max()));
