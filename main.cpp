@@ -951,7 +951,7 @@ public:
             const UnitScale & timeScale,
             const UnitScale & valueScale);
 private:
-    struct ColorSchema {QColor dark; QColor normal;};
+    struct ColorSchema {QColor dark; QColor normal; QColor anno;};
     void SetColorSchema(size_t index);
     void DrawDecorations(const DataChannel & chan);
     void DrawSampleWise(const DataFile & data);
@@ -1149,7 +1149,7 @@ void DrawChannel::DrawRulers()
 
 void DrawChannel::DrawAnnotations(const DataFile & data)
 {
-    const QPen annoPen(Qt::lightGray, 1, Qt::DotLine, Qt::RoundCap, Qt::RoundJoin);
+    const QPen annoPen(mColorSchema.anno, 1, Qt::DotLine, Qt::RoundCap, Qt::RoundJoin);
     mPainter.setPen(annoPen);
 
     const int flags = Qt::TextSingleLine|Qt::TextDontClip;
@@ -1268,10 +1268,10 @@ void DrawChannel::DrawSampleWise(const DataFile & data)
 void DrawChannel::SetColorSchema(size_t index)
 {
     static const std::vector<ColorSchema> schema = {
-        {Qt::black, Qt::gray},
-        {Qt::darkGreen, Qt::green},
-        {Qt::darkRed, Qt::red},
-        {Qt::darkBlue, Qt::blue},
+        {Qt::black,     Qt::gray,  Qt::lightGray},
+        {Qt::darkGreen, Qt::green, Qt::green},
+        {Qt::darkRed,   Qt::red,   Qt::red},
+        {Qt::darkBlue,  Qt::blue,  Qt::blue},
     };
 
     if (index >= schema.size()) {index = 0;}
