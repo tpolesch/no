@@ -779,7 +779,7 @@ private:
         const double range = mMaxData - mMinData;
         const double offset = (mMaxData + mMinData) / 2;
         mZoom = 0;
-        if (range > 0)
+        if ((range > 0) && (pixelSize() > 0))
         {
             while (range < unitSize()) {zoomIn();}
             while (range > unitSize()) {zoomOut();}
@@ -958,6 +958,7 @@ private:
     void DrawPixelWise(const DataFile & data);
     void DrawAnnotations(const DataFile & data);
     void DrawRulers();
+    void DrawRange();
 
     QWidget & mParent;
     const QRect & mRect;
@@ -970,9 +971,19 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////////
 
+struct TimeValueStrings
+{
+    QString time;
+    QString value;
+    enum Mode {Position, Measure} mode;
+};
+
 class GuiMeasure : public QWidget
 {
+private:
     Q_OBJECT
+    QPoint mLastPos;
+    TimeValueStrings mTimeValue;
 public:
     GuiMeasure(QWidget * parent):
         QWidget(parent)
@@ -987,6 +998,18 @@ public:
         layout->setContentsMargins(0, 0, 0, 0);
         QSizeGrip * grip = new QSizeGrip(this);
         layout->addWidget(grip, 0, Qt::AlignRight | Qt::AlignBottom);
+    }
+
+    void deltaMove(int dx, int dy)
+    {
+        move(x() + dx, y() + dy);
+        emit signalMoved();
+    }
+
+    void setTimeValue(const TimeValueStrings & arg)
+    {
+        mTimeValue = arg;
+        update();
     }
 signals:
     void signalMoved();
@@ -1016,20 +1039,39 @@ private:
 
     void paintEvent(QPaintEvent *) override
     {
-        // draw red crosshairs to mark the focus point
-        QPen pen(Qt::red, 1, Qt::DotLine, Qt::RoundCap, Qt::RoundJoin);
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setPen(pen);
+
+        const QPen black(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        const int y1 = painter.fontMetrics().ascent();
+        const int y2 = height() - 2;
+        QFont small = font();
+        if (small.pointSize() > 8) {small.setPointSize(8);}
+        painter.setFont(small);
+        painter.setPen(black);
+        painter.drawText(2, y1, mTimeValue.time);
+        painter.drawText(2, y2, mTimeValue.value);
+
         const int w = width();
         const int h = height();
-        const int x = w / 2;
-        const int y = h / 2;
-        painter.drawLine(0, y, w, y);
-        painter.drawLine(x, 0, x, h);
-    }
+        const QPen red(Qt::red, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        painter.setPen(red);
 
-    QPoint mLastPos;
+        const bool isMeasure = (mTimeValue.mode == TimeValueStrings::Measure);
+        if (isMeasure)
+        {
+            // draw red box to signal measure mode
+            painter.drawRect(1, 1, w-2, h-2);
+        }
+        else
+        {
+            // draw red crosshairs to mark the focus point
+            const int x = w / 2;
+            const int y = h / 2;
+            painter.drawLine(0, y, w, y);
+            painter.drawLine(x, 0, x, h);
+        }
+    }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1055,6 +1097,54 @@ private:
     QStringList mFiles;
 };
     
+////////////////////////////////////////////////////////////////////////////////
+
+static QString FormatTime(double seconds)
+{
+    int64_t ms = static_cast<int64_t>(std::abs(1000.0 * seconds));
+    int64_t factor = 1000 * 60 * 60;
+    const int64_t hour = ms / factor;
+    ms -= hour * factor;
+    factor /= 60;
+    const int64_t min = ms / factor;
+    ms -= min * factor;
+    factor /= 60;
+    const int64_t sec = ms / factor;
+    ms -= sec * factor;
+
+    QString unit;
+    QString format;
+    const double abs = std::abs(seconds);
+
+    if (abs > 59.0 * 60.0) // > 59 min
+    {
+        format = "hh:mm:ss.zzz";
+        unit="h";
+    }
+    else if (abs > 59.0) // > 59 sec
+    {
+        format = "mm:ss.zzz";
+        unit="m";
+    }
+    else if (abs > 0.998) // > 998ms
+    {
+        format = "ss.zzz";
+        unit="s";
+    }
+    else
+    {
+        format = "zzz";
+        unit="ms";
+    }
+
+    const QString sign((seconds < 0) ? "-" : "");
+    const QTime time(hour, min, sec, ms);
+    const QString string = sign + time.toString(format) + unit;
+    qDebug() << hour << min << sec << ms;
+    qDebug("%12s => %s", qPrintable(format), qPrintable(string)); 
+    return string;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // class DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
@@ -1103,27 +1193,42 @@ DrawChannel::DrawChannel(QWidget & parent,
 
     DrawDecorations(chan);
     DrawRulers();
+    DrawRange();
 }
 
 void DrawChannel::DrawDecorations(const DataChannel & chan)
 {
-    const int flags = Qt::TextSingleLine|Qt::TextDontClip;
-    QRect lastBounds(mParent.rect());
+    const int x = 20;
+    const int step = mPainter.fontMetrics().height();
+    int y = 2 * step;
 
     size_t dataIndex = 0;
     for (auto & data:chan.files())
     {
         SetColorSchema(dataIndex++);
-        const QRect bounds = mPainter.boundingRect(lastBounds, flags, data.label());
         mPainter.setPen(mDefaultPen);
-        mPainter.drawText(bounds.bottomLeft(), data.label());
-        lastBounds.moveTop(bounds.bottom());
+        mPainter.drawText(QPoint(x, y), data.label());
+        y += step;
     }
+}
+
+void DrawChannel::DrawRange()
+{
+    const QPen rulerPen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    mPainter.setPen(rulerPen);
+    const int pxmax = 0;
+    const int pxmin = mParent.height();
+    const double max = mTranslate.ypxToUnit(pxmax);
+    const double min = mTranslate.ypxToUnit(pxmin);
+    const int as = mPainter.fontMetrics().ascent();
+    const QString unit = mTranslate.Y().unit();
+    mPainter.drawText(QPoint(0, pxmax + as), QString::number(max) + unit);
+    mPainter.drawText(QPoint(0, pxmin), QString::number(min) + unit);
 }
 
 void DrawChannel::DrawRulers()
 {
-    const QPen rulerPen(Qt::lightGray, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    const QPen rulerPen(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     mPainter.setPen(rulerPen);
     const UnitScale & xs = mTranslate.X();
     const UnitScale & ys = mTranslate.Y();
@@ -1140,10 +1245,11 @@ void DrawChannel::DrawRulers()
     
     const double xu = xmm / xs.mmPerUnit();
     const double yu = ymm / ys.mmPerUnit();
-    const QString xt = QString::number(xu) + xs.unit();
+    const QString xt = FormatTime(xu);
     const QString yt = QString::number(yu) + ys.unit();
-    const QRect yb = mPainter.fontMetrics().boundingRect(yt);
-    mPainter.drawText(QPoint((x1 - yb.width() - 3), (y2 + yb.height())), yt);
+    const auto fm = mPainter.fontMetrics();
+    const QRect yb = fm.boundingRect(yt);
+    mPainter.drawText(QPoint((x1 - yb.width() - 3), (y2 + fm.ascent())), yt);
     mPainter.drawText(QPoint((x2 + 3), y1 - 3), xt);
 }
 
@@ -1374,6 +1480,7 @@ public:
     explicit GuiWave(QWidget * parent, const DataChannel & data, double seconds):
         QWidget(parent),
         mData(data),
+        mResizeCounter(0),
         mTimeScale(25.0, "s"),
         mValueScale(10.0, data.unit())
     {
@@ -1397,41 +1504,22 @@ public:
         return result;
     }
 
-    QString FormatTime(double sec) const
+    TimeValueStrings focusStrings() const
     {
-        QString result;
-        QTextStream ss(&result);
-        const double msec = 1000.0 * sec;
-        const int hour = static_cast<int>(sec) / 3600;
-        sec -= hour * 3600;
-        const int min = static_cast<int>(sec) / 60;
-        sec -= min * 60;
-
-        if (hour != 0) {ss << hour << "h";}
-        ss << min << "m";
-        ss << sec << "s (";
-        ss << msec << "ms)";
-        return result;
+        TimeValueStrings p;
+        p.time = FormatTime(mTimeScale.focus());
+        p.value = FormatValue(mValueScale.focus());
+        p.mode = TimeValueStrings::Position;
+        return p;
     }
 
-    QString focusString() const
+    TimeValueStrings measureStrings(QWidget * ptr) const
     {
-        QString result;
-        QTextStream s(&result);
-        s << "focus = ";
-        s << FormatTime(mTimeScale.focus()) << ", ";
-        s << FormatValue(mValueScale.focus());
-        return result;
-    }
-
-    QString measureString(const GuiMeasure & measure) const
-    {
-        QString result;
-        QTextStream s(&result);
-        s << "measure = ";
-        s << FormatTime(mTimeScale.pixelToUnit(measure.width())) << ", ";
-        s << FormatValue(mValueScale.pixelToUnit(measure.height()));
-        return result;
+        TimeValueStrings p;
+        p.time = FormatTime(mTimeScale.pixelToUnit(ptr->width()));
+        p.value = FormatValue(mValueScale.pixelToUnit(ptr->height()));
+        p.mode = TimeValueStrings::Measure;
+        return p;
     }
 
     QString zoomString() const
@@ -1522,6 +1610,7 @@ signals:
     void signalSelected(GuiWave *);
 private:
     const DataChannel & mData;
+    int mResizeCounter;
     UnitScale mTimeScale;
     UnitScale mValueScale;
 
@@ -1537,9 +1626,14 @@ private:
 
     void resizeEvent(QResizeEvent *) override
     {
-        qDebug() << "GuiWave::resizeEvent";
+        qDebug() << "GuiWave::resizeEvent" << width() << "X" << height() << mResizeCounter;
         mValueScale.setPixelSize(height());
-        mTimeScale.setPixelSize(width());
+        if ((mResizeCounter < 100) && (++mResizeCounter < 2))
+        {
+            // 1st resize is an internal event.
+            // following resize events should not touch the time scaling
+            mTimeScale.setPixelSize(width());
+        }
         update();
     }
     
@@ -1615,9 +1709,15 @@ public:
     void right()    {for (auto & chan:mChannels) {chan->right();   }; statusTime();}
     void yzoomIn()  {if (mSelected) {mSelected->yzoomIn();  }; statusZoom();}
     void yzoomOut() {if (mSelected) {mSelected->yzoomOut(); }; statusZoom();}
-    void yzoomAuto(){if (mSelected) {mSelected->yzoomAuto();}; statusZoom();}
     void up()       {if (mSelected) {mSelected->up();       }; statusValue();}
     void down()     {if (mSelected) {mSelected->down();     }; statusValue();}
+    void yzoomAuto(){if (mSelected) {mSelected->yzoomAuto();}; statusZoom();}
+    void yzoomAutoAll() {for (auto & chan:mChannels) {chan->yzoomAuto();}; statusZoom();}
+
+    void measureLeft()  {mMeasure->deltaMove(-10, 0);}
+    void measureRight() {mMeasure->deltaMove( 10, 0);}
+    void measureUp()    {mMeasure->deltaMove(0, -10);}
+    void measureDown()  {mMeasure->deltaMove(0,  10);}
 private:
     void setFocus()
     {
@@ -1647,14 +1747,14 @@ private:
     void statusFocus()
     {
         if (!mSelected) return;
-        mStatus->showMessage(mSelected->focusString());
+        mMeasure->setTimeValue(mSelected->focusStrings());
     }
 
     void statusMeasure()
     {
         if (!mSelected) return;
         if (!mMeasure) return;
-        mStatus->showMessage(mSelected->measureString(*mMeasure));
+        mMeasure->setTimeValue(mSelected->measureStrings(mMeasure));
     }
 
     void setMeasuredWave(GuiWave * wave)
@@ -1725,10 +1825,15 @@ private slots:
     void yzoomIn()  {if (mGui) {mGui->yzoomIn();}}
     void yzoomOut() {if (mGui) {mGui->yzoomOut();}}
     void yzoomAuto(){if (mGui) {mGui->yzoomAuto();}}
+    void yzoomAutoAll(){if (mGui) {mGui->yzoomAutoAll();}}
     void left()     {if (mGui) {mGui->left();}}
     void right()    {if (mGui) {mGui->right();}}
     void up()       {if (mGui) {mGui->up();}}
     void down()     {if (mGui) {mGui->down();}}
+    void measureLeft()  {if (mGui) {mGui->measureLeft();}}
+    void measureRight() {if (mGui) {mGui->measureRight();}}
+    void measureUp()    {if (mGui) {mGui->measureUp();}}
+    void measureDown()  {if (mGui) {mGui->measureDown();}}
 public:
     MainWindow():
         mSetup(),
@@ -1758,10 +1863,15 @@ public:
         ACTION(viewMenu, "Y-Zoom-In", yzoomIn, Qt::Key_Y);
         ACTION(viewMenu, "Y-Zoom-Out", yzoomOut, Qt::Key_Y + Qt::SHIFT);
         ACTION(viewMenu, "Y-Zoom-Auto", yzoomAuto, Qt::Key_A);
+        ACTION(viewMenu, "Y-Zoom-Auto-All", yzoomAutoAll, Qt::Key_A + Qt::SHIFT);
         ACTION(viewMenu, "Left", left, Qt::Key_Left);
         ACTION(viewMenu, "Right", right, Qt::Key_Right);
         ACTION(viewMenu, "Up", up, Qt::Key_Up);
         ACTION(viewMenu, "Down", down, Qt::Key_Down);
+        ACTION(viewMenu, "Measure-Left", measureLeft, Qt::Key_Left + Qt::SHIFT);
+        ACTION(viewMenu, "Measure-Right", measureRight, Qt::Key_Right + Qt::SHIFT);
+        ACTION(viewMenu, "Measure-Up", measureUp, Qt::Key_Up + Qt::SHIFT);
+        ACTION(viewMenu, "Measure-Down", measureDown, Qt::Key_Down + Qt::SHIFT);
 #undef ACTION
     }
 
@@ -1831,6 +1941,18 @@ int main(int argc, char * argv[])
 ////////////////////////////////////////////////////////////////////////////////
 // Testing
 ////////////////////////////////////////////////////////////////////////////////
+
+TEST(FormatTime, FormatTime)
+{
+    double time = 0.456;
+    EXPECT_EQ("456ms", FormatTime(time));
+    time += 3.0;
+    EXPECT_EQ("03.456s", FormatTime(time));
+    time += 2 * 60;
+    EXPECT_EQ("02:03.456m", FormatTime(time));
+    time += 60 * 60;
+    EXPECT_EQ("01:02:03.456h", FormatTime(time));
+}
 
 TEST(InfoParser, value)
 {
