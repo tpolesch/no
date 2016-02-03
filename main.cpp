@@ -1111,38 +1111,14 @@ static QString FormatTime(double seconds)
     factor /= 60;
     const int64_t sec = ms / factor;
     ms -= sec * factor;
-
-    QString unit;
-    QString format;
-    const double abs = std::abs(seconds);
-
-    if (abs > 59.0 * 60.0) // > 59 min
-    {
-        format = "hh:mm:ss.zzz";
-        unit="h";
-    }
-    else if (abs > 59.0) // > 59 sec
-    {
-        format = "mm:ss.zzz";
-        unit="m";
-    }
-    else if (abs > 0.998) // > 998ms
-    {
-        format = "ss.zzz";
-        unit="s";
-    }
-    else
-    {
-        format = "zzz";
-        unit="ms";
-    }
-
-    const QString sign((seconds < 0) ? "-" : "");
-    const QTime time(hour, min, sec, ms);
-    const QString string = sign + time.toString(format) + unit;
-    qDebug() << hour << min << sec << ms;
-    qDebug("%12s => %s", qPrintable(format), qPrintable(string)); 
-    return string;
+        
+    QString result;
+    QTextStream s(&result);
+    if (hour != 0) s << hour << "h";
+    if ( min != 0) s << min  << "m";
+    if ( sec != 0) s << sec  << "s";
+    if (  ms != 0) s << ms   << "ms";
+    return result;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1772,14 +1748,14 @@ private:
         }
         else
         {
-            geo.setSize(QSize(50, 50));
+            geo.setSize(QSize(80, 50));
             geo.moveCenter(wave->rect().center());
         }
 
         delete mMeasure;
         GuiMeasure * gui = new GuiMeasure(wave);
         gui->setGeometry(geo);
-        gui->setMinimumSize(30, 30);
+        gui->setMinimumSize(40, 40);
         gui->show();
         connect(gui, SIGNAL(signalMoved()), this, SLOT(slotMeasureMoved()));
         connect(gui, SIGNAL(signalResized()), this, SLOT(slotMeasureResized()));
@@ -1793,7 +1769,7 @@ private:
         if (mMeasure && mSelected)
         {
             QRect geo;
-            geo.setSize(QSize(50, 50));
+            geo.setSize(QSize(80, 50));
             geo.moveCenter(mSelected->rect().center());
             mMeasure->setGeometry(geo);
             slotMeasureMoved();
@@ -1947,11 +1923,11 @@ TEST(FormatTime, FormatTime)
     double time = 0.456;
     EXPECT_EQ("456ms", FormatTime(time));
     time += 3.0;
-    EXPECT_EQ("03.456s", FormatTime(time));
+    EXPECT_EQ("3s456ms", FormatTime(time));
     time += 2 * 60;
-    EXPECT_EQ("02:03.456m", FormatTime(time));
+    EXPECT_EQ("2m3s456ms", FormatTime(time));
     time += 60 * 60;
-    EXPECT_EQ("01:02:03.456h", FormatTime(time));
+    EXPECT_EQ("1h2m3s456ms", FormatTime(time));
 }
 
 TEST(InfoParser, value)
