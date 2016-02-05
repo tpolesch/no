@@ -939,6 +939,21 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+// GuiSetup
+////////////////////////////////////////////////////////////////////////////////
+
+struct GuiSetup
+{
+    const QFont defaultFont;
+    QString fileName;
+    explicit GuiSetup(QWidget * parent) :
+        defaultFont(parent->font()),
+        fileName()
+    {
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////
 // DrawChannel
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -947,6 +962,7 @@ class DrawChannel
 public:
     explicit DrawChannel(QWidget & parent,
             const QRect & rect,
+            const GuiSetup & setup,
             const DataChannel & data,
             const UnitScale & timeScale,
             const UnitScale & valueScale);
@@ -962,6 +978,7 @@ private:
 
     QWidget & mParent;
     const QRect & mRect;
+    const GuiSetup & mSetup;
     Translate mTranslate;
     QPainter mPainter;
     MeasurePerformance mMeasurePerformance;
@@ -1045,9 +1062,6 @@ private:
         const QPen black(Qt::black, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         const int y1 = painter.fontMetrics().ascent();
         const int y2 = height() - 2;
-        QFont small = font();
-        if (small.pointSize() > 8) {small.setPointSize(8);}
-        painter.setFont(small);
         painter.setPen(black);
         painter.drawText(2, y1, mTimeValue.time);
         painter.drawText(2, y2, mTimeValue.value);
@@ -1127,22 +1141,20 @@ static QString FormatTime(double seconds)
     
 DrawChannel::DrawChannel(QWidget & parent,
             const QRect & rect,
+            const GuiSetup & setup,
             const DataChannel & chan,
             const UnitScale & timeScale,
             const UnitScale & valueScale):
     mParent(parent),
     mRect(rect),
+    mSetup(setup),
     mTranslate(timeScale, valueScale),
     mPainter(&parent),
     mMeasurePerformance("DrawChannel"),
     mDefaultPen(Qt::magenta, 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin),
     mColorSchema()
 {
-    QFont font = parent.font();
-    if (font.pointSize() > 8) {font.setPointSize(8);}
-
     mPainter.setRenderHint(QPainter::Antialiasing, true);
-    mPainter.setFont(font);
     mPainter.fillRect(mRect, Qt::white);
 
     size_t dataIndex = 0;
@@ -1444,17 +1456,13 @@ void ArgumentParser::PrintUsage()
 // new gui
 ////////////////////////////////////////////////////////////////////////////////
 
-struct GuiSetup
-{
-    QString fileName;
-};
-
 class GuiWave : public QWidget
 {
     Q_OBJECT
 public:
-    explicit GuiWave(QWidget * parent, const DataChannel & data, double seconds):
+    explicit GuiWave(QWidget * parent, const GuiSetup & setup, const DataChannel & data, double seconds):
         QWidget(parent),
+        mSetup(setup),
         mData(data),
         mResizeCounter(0),
         mTimeScale(25.0, "s"),
@@ -1585,6 +1593,7 @@ signals:
     void signalClicked(GuiWave *, QMouseEvent *);
     void signalSelected(GuiWave *);
 private:
+    const GuiSetup & mSetup;
     const DataChannel & mData;
     int mResizeCounter;
     UnitScale mTimeScale;
@@ -1592,7 +1601,7 @@ private:
 
     void paintEvent(QPaintEvent * e) override
     {
-        DrawChannel(*this, e->rect(), mData, mTimeScale, mValueScale);
+        DrawChannel(*this, e->rect(), mSetup, mData, mTimeScale, mValueScale);
     }
 
     void mousePressEvent(QMouseEvent * evt) override
@@ -1623,6 +1632,7 @@ class GuiMain : public QWidget
 {
     Q_OBJECT
 private:
+    const GuiSetup & mSetup;
     const DataMain & mData;
     QStatusBar * mStatus;
     GuiMeasure * mMeasure;
@@ -1656,8 +1666,9 @@ private slots:
         statusFocus();
     }
 public:
-    GuiMain(QMainWindow * parent, const DataMain & data):
+    GuiMain(QMainWindow * parent, const GuiSetup & setup, const DataMain & data):
         QWidget(parent),
+        mSetup(setup),
         mData(data),
         mStatus(parent->statusBar()),
         mMeasure(nullptr),
@@ -1667,7 +1678,7 @@ public:
         QVBoxLayout * layout = new QVBoxLayout(this);
         for (auto & chan:mData.channels())
         {
-            GuiWave * gui = new GuiWave(this, chan, data.duration());
+            GuiWave * gui = new GuiWave(this, mSetup, chan, data.duration());
             layout->addWidget(gui);
             mChannels.push_back(gui);
             connect(gui, SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
@@ -1794,7 +1805,6 @@ private:
 private slots:
     void Open()     {Open(QFileDialog::getOpenFileName(this, QString("Open"), QDir::currentPath()));}
     void Reload()   {Open(mSetup.fileName);}
-    void Vim()      {(void)system(QString(QString("gvim ") + mSetup.fileName).toStdString().c_str());}
     void Exit()     {close();}
     void xzoomIn()  {if (mGui) {mGui->xzoomIn();}}
     void xzoomOut() {if (mGui) {mGui->xzoomOut();}}
@@ -1810,9 +1820,26 @@ private slots:
     void measureRight() {if (mGui) {mGui->measureRight();}}
     void measureUp()    {if (mGui) {mGui->measureUp();}}
     void measureDown()  {if (mGui) {mGui->measureDown();}}
+    void toggleFont()
+    {
+        if (!mGui) return;
+        QFont small(mSetup.defaultFont);
+        small.setPixelSize(9);
+        qDebug() << "toggleFont" << mSetup.defaultFont.pixelSize() << mGui->font().pixelSize();
+        mGui->setFont((mGui->font().pixelSize() != small.pixelSize())
+                ? small
+                : mSetup.defaultFont);
+    }
+    void vim()
+    {
+        const QString cmd = "gvim " + mSetup.fileName;
+        const std::string std = cmd.toStdString();
+        const auto rv = system(std.c_str());
+        qDebug() << rv;
+    }
 public:
     MainWindow():
-        mSetup(),
+        mSetup(this),
         mData(nullptr),
         mGui(nullptr)
     {
@@ -1830,7 +1857,7 @@ public:
         QMenu * fileMenu = menuBar()->addMenu(tr("&File"));
         ACTION(fileMenu, "&Open...", Open, QKeySequence::Open);
         ACTION(fileMenu, "&Reload", Reload, Qt::Key_R);
-        ACTION(fileMenu, "&Vim", Vim, Qt::Key_V);
+        ACTION(fileMenu, "&Vim", vim, Qt::Key_V);
         ACTION(fileMenu, "&Exit", Exit, QKeySequence::Quit);
 
         QMenu * viewMenu = menuBar()->addMenu(tr("&View"));
@@ -1848,6 +1875,7 @@ public:
         ACTION(viewMenu, "Measure-Right", measureRight, Qt::Key_Right + Qt::SHIFT);
         ACTION(viewMenu, "Measure-Up", measureUp, Qt::Key_Up + Qt::SHIFT);
         ACTION(viewMenu, "Measure-Down", measureDown, Qt::Key_Down + Qt::SHIFT);
+        ACTION(viewMenu, "Font", toggleFont, Qt::Key_F);
 #undef ACTION
     }
 
@@ -1868,7 +1896,7 @@ public:
 
         if (mData->valid())
         {
-            mGui = new GuiMain(this, *mData);
+            mGui = new GuiMain(this, mSetup, *mData);
         }
         else
         {
