@@ -939,18 +939,36 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-// GuiSetup
+// GlobalSetup
 ////////////////////////////////////////////////////////////////////////////////
 
-struct GuiSetup
+class GlobalSetup
 {
-    const QFont defaultFont;
-    QString fileName;
-    explicit GuiSetup(QWidget * parent) :
-        defaultFont(parent->font()),
-        fileName()
+public:
+    static GlobalSetup & Instance()
+    {
+        static GlobalSetup setup;
+        return setup;
+    }
+
+    void setFileName(const QString & arg) {mFileName = arg;}
+    void setDefaultFont(QWidget * parent) {mDefaultFont = parent->font();}
+    void setDisplayMilliSeconds(bool arg) {mDisplayMilliSeconds = arg;}
+
+    const QString & fileName() const {return mFileName;}
+    const QFont & defaultFont() const {return mDefaultFont;}
+    bool displayMilliSeconds() const {return mDisplayMilliSeconds;}
+private:
+    GlobalSetup():
+        mFileName(),
+        mDefaultFont(),
+        mDisplayMilliSeconds(false)
     {
     }
+private:
+    QString mFileName;
+    QFont mDefaultFont;
+    bool mDisplayMilliSeconds;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -962,7 +980,6 @@ class DrawChannel
 public:
     explicit DrawChannel(QWidget & parent,
             const QRect & rect,
-            const GuiSetup & setup,
             const DataChannel & data,
             const UnitScale & timeScale,
             const UnitScale & valueScale);
@@ -978,7 +995,6 @@ private:
 
     QWidget & mParent;
     const QRect & mRect;
-    const GuiSetup & mSetup;
     Translate mTranslate;
     QPainter mPainter;
     MeasurePerformance mMeasurePerformance;
@@ -1116,6 +1132,15 @@ private:
 static QString FormatTime(double seconds)
 {
     int64_t ms = static_cast<int64_t>(std::abs(1000.0 * seconds));
+
+    if (GlobalSetup::Instance().displayMilliSeconds())
+    {
+        QString result;
+        QTextStream s(&result);
+        s << ms << "ms";
+        return result;
+    }
+
     int64_t factor = 1000 * 60 * 60;
     const int64_t hour = ms / factor;
     ms -= hour * factor;
@@ -1141,13 +1166,11 @@ static QString FormatTime(double seconds)
     
 DrawChannel::DrawChannel(QWidget & parent,
             const QRect & rect,
-            const GuiSetup & setup,
             const DataChannel & chan,
             const UnitScale & timeScale,
             const UnitScale & valueScale):
     mParent(parent),
     mRect(rect),
-    mSetup(setup),
     mTranslate(timeScale, valueScale),
     mPainter(&parent),
     mMeasurePerformance("DrawChannel"),
@@ -1460,9 +1483,8 @@ class GuiWave : public QWidget
 {
     Q_OBJECT
 public:
-    explicit GuiWave(QWidget * parent, const GuiSetup & setup, const DataChannel & data, double seconds):
+    explicit GuiWave(QWidget * parent, const DataChannel & data, double seconds):
         QWidget(parent),
-        mSetup(setup),
         mData(data),
         mResizeCounter(0),
         mTimeScale(25.0, "s"),
@@ -1593,7 +1615,6 @@ signals:
     void signalClicked(GuiWave *, QMouseEvent *);
     void signalSelected(GuiWave *);
 private:
-    const GuiSetup & mSetup;
     const DataChannel & mData;
     int mResizeCounter;
     UnitScale mTimeScale;
@@ -1601,7 +1622,7 @@ private:
 
     void paintEvent(QPaintEvent * e) override
     {
-        DrawChannel(*this, e->rect(), mSetup, mData, mTimeScale, mValueScale);
+        DrawChannel(*this, e->rect(), mData, mTimeScale, mValueScale);
     }
 
     void mousePressEvent(QMouseEvent * evt) override
@@ -1632,7 +1653,6 @@ class GuiMain : public QWidget
 {
     Q_OBJECT
 private:
-    const GuiSetup & mSetup;
     const DataMain & mData;
     QStatusBar * mStatus;
     GuiMeasure * mMeasure;
@@ -1666,9 +1686,8 @@ private slots:
         statusFocus();
     }
 public:
-    GuiMain(QMainWindow * parent, const GuiSetup & setup, const DataMain & data):
+    GuiMain(QMainWindow * parent, const DataMain & data):
         QWidget(parent),
-        mSetup(setup),
         mData(data),
         mStatus(parent->statusBar()),
         mMeasure(nullptr),
@@ -1678,7 +1697,7 @@ public:
         QVBoxLayout * layout = new QVBoxLayout(this);
         for (auto & chan:mData.channels())
         {
-            GuiWave * gui = new GuiWave(this, mSetup, chan, data.duration());
+            GuiWave * gui = new GuiWave(this, chan, data.duration());
             layout->addWidget(gui);
             mChannels.push_back(gui);
             connect(gui, SIGNAL(signalClicked(GuiWave *, QMouseEvent *)),
@@ -1799,12 +1818,11 @@ class MainWindow : public QMainWindow
 {
     Q_OBJECT
 private:
-    GuiSetup mSetup;
     DataMain * mData;
     GuiMain * mGui;
 private slots:
     void Open()     {Open(QFileDialog::getOpenFileName(this, QString("Open"), QDir::currentPath()));}
-    void Reload()   {Open(mSetup.fileName);}
+    void Reload()   {Open(GlobalSetup::Instance().fileName());}
     void Exit()     {close();}
     void xzoomIn()  {if (mGui) {mGui->xzoomIn();}}
     void xzoomOut() {if (mGui) {mGui->xzoomOut();}}
@@ -1820,29 +1838,36 @@ private slots:
     void measureRight() {if (mGui) {mGui->measureRight();}}
     void measureUp()    {if (mGui) {mGui->measureUp();}}
     void measureDown()  {if (mGui) {mGui->measureDown();}}
+    void toggleTime()
+    {
+        if (!mGui) return;
+        GlobalSetup & gs = GlobalSetup::Instance();
+        gs.setDisplayMilliSeconds(!gs.displayMilliSeconds());
+        mGui->update();
+    }
     void toggleFont()
     {
         if (!mGui) return;
-        QFont small(mSetup.defaultFont);
+        QFont normal = GlobalSetup::Instance().defaultFont();
+        QFont small(normal);
         small.setPixelSize(9);
-        qDebug() << "toggleFont" << mSetup.defaultFont.pixelSize() << mGui->font().pixelSize();
         mGui->setFont((mGui->font().pixelSize() != small.pixelSize())
                 ? small
-                : mSetup.defaultFont);
+                : normal);
     }
     void vim()
     {
-        const QString cmd = "gvim " + mSetup.fileName;
+        const QString cmd = "gvim " + GlobalSetup::Instance().fileName();
         const std::string std = cmd.toStdString();
         const auto rv = system(std.c_str());
         qDebug() << rv;
     }
 public:
     MainWindow():
-        mSetup(this),
         mData(nullptr),
         mGui(nullptr)
     {
+        GlobalSetup::Instance().setDefaultFont(this);
         setWindowTitle(QString("no"));
         resize(600, 300);
     
@@ -1876,6 +1901,7 @@ public:
         ACTION(viewMenu, "Measure-Up", measureUp, Qt::Key_Up + Qt::SHIFT);
         ACTION(viewMenu, "Measure-Down", measureDown, Qt::Key_Down + Qt::SHIFT);
         ACTION(viewMenu, "Font", toggleFont, Qt::Key_F);
+        ACTION(viewMenu, "Time", toggleTime, Qt::Key_T);
 #undef ACTION
     }
 
@@ -1891,12 +1917,12 @@ public:
         delete mData;
         mGui = nullptr;
         mData = nullptr;
-        mSetup.fileName = name;
+        GlobalSetup::Instance().setFileName(name);
         mData = new DataMain(name);
 
         if (mData->valid())
         {
-            mGui = new GuiMain(this, mSetup, *mData);
+            mGui = new GuiMain(this, *mData);
         }
         else
         {
