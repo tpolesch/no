@@ -568,6 +568,7 @@ public:
     QString unit() const
     {
         if (files().size() < 1) return "";
+        if (files()[0].samples().size() < 1) return "";
         return files()[0].unit();
     }
 
@@ -1709,6 +1710,12 @@ public:
         if (mChannels.size() > 0) {slotWaveSelected(mChannels[0]);}
     }
 
+    void refresh()
+    {
+        update();
+        statusFocus();
+    }
+
     void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn(); }; statusZoom();}
     void xzoomOut() {for (auto & chan:mChannels) {chan->xzoomOut();}; statusZoom();}
     void left()     {for (auto & chan:mChannels) {chan->left();    }; statusTime();}
@@ -1734,33 +1741,39 @@ private:
 
     void statusTime()
     {
+        statusFocus();
         if (!mSelected) return;
         mStatus->showMessage(mSelected->timeString());
     }
 
     void statusValue()
     {
+        statusFocus();
         if (!mSelected) return;
         mStatus->showMessage(mSelected->valueString());
     }
 
     void statusZoom()
     {
+        statusFocus();
         if (!mSelected) return;
         mStatus->showMessage(mSelected->zoomString());
     }
 
     void statusFocus()
     {
-        if (!mSelected) return;
-        mMeasure->setTimeValue(mSelected->focusStrings());
+        if (mSelected && mMeasure)
+        {
+            mMeasure->setTimeValue(mSelected->focusStrings());
+        }
     }
 
     void statusMeasure()
     {
-        if (!mSelected) return;
-        if (!mMeasure) return;
-        mMeasure->setTimeValue(mSelected->measureStrings(mMeasure));
+        if (mSelected && mMeasure)
+        {
+            mMeasure->setTimeValue(mSelected->measureStrings(mMeasure));
+        }
     }
 
     void setMeasuredWave(GuiWave * wave)
@@ -1843,7 +1856,7 @@ private slots:
         if (!mGui) return;
         GlobalSetup & gs = GlobalSetup::Instance();
         gs.setDisplayMilliSeconds(!gs.displayMilliSeconds());
-        mGui->update();
+        mGui->refresh();
     }
     void toggleFont()
     {
