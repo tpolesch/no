@@ -89,6 +89,11 @@ public:
         qDebug() << "Interleave" << mBlockSize << mChannelOffset << mChannelSize;
     }
 
+    void first()
+    {
+        mPosition = 0;
+    }
+
     void next()
     {
         ++mPosition;
@@ -220,6 +225,7 @@ private:
     int mSampleOffset;
     bool mIsSigned;
     bool mIsBigEndian;
+    const bool mIsAutoDetectByteOrder;
 public:
     DataFile & operator=(const DataFile &) = default;
     DataFile(const DataFile &) = default;
@@ -240,7 +246,8 @@ public:
         mSampleMask(0xffff),
         mSampleOffset(0),
         mIsSigned(true),
-        mIsBigEndian(true)
+        mIsBigEndian(true),
+        mIsAutoDetectByteOrder(true)
     {
         parseInfo();
         readData();
@@ -414,9 +421,52 @@ private:
 
     void readData()
     {
+        readData(mSamples, mIsBigEndian);
+        if (mIsAutoDetectByteOrder) autoDetectByteOrder();
+    }
+
+    void autoDetectByteOrder()
+    {
+        std::vector<int> swap;
+        readData(swap, !mIsBigEndian);
+
+        const size_t size = swap.size();
+        Q_ASSERT(mSamples.size() == size);
+        if (size < 2) return;
+
+        int compare = 0;
+        auto o1 = mSamples.begin();
+        auto o2 = o1 + 1;
+        auto s1 = swap.begin();
+        auto s2 = s1 + 1;
+
+        // Idea: The difference between 2 samples is usually small (e.g. ECG baseline
+        // sections) but can increase dramatically when assuming the wrong byte order.
+        for (size_t index = 1; index < size; ++index, ++o1, ++o2, ++s1, ++s2)
+        {
+            const int diffOrig = (*o1) - (*o2);
+            const int diffSwap = (*s1) - (*s2);
+            const int cmp = std::abs(diffOrig) - std::abs(diffSwap);
+            if (cmp > 0) ++compare;
+            if (cmp < 0) --compare;
+        }
+
+        if (compare > 0)
+        {
+            qDebug() << "autoDetectByteOrder: swap" << mData;
+            mSamples = swap;
+        }
+    }
+
+    void readData(std::vector<int> & dst, bool isBigEndian)
+    {
+        mInterleave.first();
+        dst.clear();
+
         if (mData == "dummy") return;
         if (mData.size() < 1) return;
-        const QString fullName = mPath + mData;
+        const bool isAbsPath = mData.startsWith('/');
+        const QString fullName = (isAbsPath ? (mData) : (mPath + mData));
         QFile read(fullName);
 
         if (!read.open(QIODevice::ReadOnly))
@@ -426,9 +476,9 @@ private:
         }
 
         const size_t size = static_cast<size_t>(QFileInfo(fullName).size());
-        mSamples.reserve(size / sizeof(qint16));
+        dst.reserve(size / sizeof(qint16));
         QDataStream stream(&read);
-        stream.setByteOrder(mIsBigEndian ? QDataStream::BigEndian : QDataStream::LittleEndian);
+        stream.setByteOrder(isBigEndian ? QDataStream::BigEndian : QDataStream::LittleEndian);
 
         while (!stream.atEnd())
         {
@@ -450,7 +500,7 @@ private:
 
             if (mInterleave.isUsed())
             {
-                mSamples.push_back(lsb);
+                dst.push_back(lsb);
             }
 
             mInterleave.next();
