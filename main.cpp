@@ -48,8 +48,8 @@ public:
 class Annotation
 {
 private:
-    const Second mSec;
-    const QString mTxt;
+    Second mSec;
+    QString mTxt;
 public:
     explicit Annotation(double msec, const QString & txt):
         mSec(msec / 1000.0),
@@ -59,6 +59,12 @@ public:
 
     Second sec() const {return mSec;}
     const QString & txt() const {return mTxt;}
+};
+
+struct MergedAnnotation
+{
+    Annotation annotation;
+    size_t fileIndex;
 };
 
 class Interleave
@@ -571,6 +577,7 @@ class DataChannel
 private:
     Second mDuration;
     std::vector<DataFile> mFiles;
+    std::vector<MergedAnnotation> mMergedAnnotations;
 public:
     void plus(DataFile & file)
     {
@@ -592,12 +599,28 @@ public:
             return;
         }
 
+        size_t index = 0;
+        mMergedAnnotations.clear();
         mDuration = files()[0].duration();
 
         for (auto & file:files())
         {
             if (mDuration < file.duration()) {mDuration = file.duration();}
+
+            for (auto & anno:file.annotations())
+            {
+                mMergedAnnotations.push_back({anno, index});
+            }
+
+            ++index;
         }
+
+        auto cmp = [](const MergedAnnotation & a, const MergedAnnotation & b)
+        {
+            return a.annotation.sec() < b.annotation.sec();
+        };
+
+        std::sort(mMergedAnnotations.begin(), mMergedAnnotations.end(), cmp);
     }
 
     bool hasSamples() const
@@ -608,6 +631,11 @@ public:
         }
 
         return false;
+    }
+    
+    const std::vector<MergedAnnotation> & mergedAnnotations() const
+    {
+        return mMergedAnnotations;
     }
     
     const std::vector<DataFile> & files() const
@@ -1040,7 +1068,7 @@ private:
     void DrawDecorations(const DataChannel & chan);
     void DrawSampleWise(const DataFile & data);
     void DrawPixelWise(const DataFile & data);
-    void DrawAnnotations(const DataFile & data);
+    void DrawAnnotations(const DataChannel & chan);
     void DrawRulers();
     void DrawRange();
 
@@ -1238,8 +1266,6 @@ DrawChannel::DrawChannel(QWidget & parent,
         mTranslate.setData(data);
         mTranslate.debug(rect);
 
-        DrawAnnotations(data);
-
         if (data.samples().size() > 1)
         {
             if (mTranslate.samplesPerPixel() > 5)
@@ -1253,6 +1279,7 @@ DrawChannel::DrawChannel(QWidget & parent,
         }
     }
 
+    DrawAnnotations(chan);
     DrawDecorations(chan);
     DrawRulers();
     DrawRange();
@@ -1315,10 +1342,8 @@ void DrawChannel::DrawRulers()
     mPainter.drawText(QPoint((x2 + 3), y1 - 3), xt);
 }
 
-void DrawChannel::DrawAnnotations(const DataFile & data)
+void DrawChannel::DrawAnnotations(const DataChannel & chan)
 {
-    const QPen annoPen(mColorSchema.anno, 1, Qt::DotLine, Qt::RoundCap, Qt::RoundJoin);
-    mPainter.setPen(annoPen);
 
     const int flags = Qt::TextSingleLine|Qt::TextDontClip;
     const int requestLeft = mRect.left();
@@ -1327,8 +1352,13 @@ void DrawChannel::DrawAnnotations(const DataFile & data)
     QRect lastBounds(INT_MIN, 0, 0, 0);
     const int bottom = mParent.rect().bottom();
 
-    for (auto & anno:data.annotations())
+    for (auto & merged:chan.mergedAnnotations())
     {
+        SetColorSchema(merged.fileIndex);
+        const QPen annoPen(mColorSchema.anno, 1, Qt::DotLine, Qt::RoundCap, Qt::RoundJoin);
+        mPainter.setPen(annoPen);
+
+        auto & anno = merged.annotation;
         const int textLeft = mTranslate.secondToXpx(anno.sec());
         if (textLeft > requestRight) return;
         QRect bounds(textLeft, lastBounds.top(), max, max);
