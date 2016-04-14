@@ -8,6 +8,61 @@
 typedef double Second;
 
 ////////////////////////////////////////////////////////////////////////////////
+// GlobalSetup
+////////////////////////////////////////////////////////////////////////////////
+
+enum ByteOrderMode
+{
+    AutoByteOrder,
+    KeepByteOrder,
+    SwapByteOrder
+};
+
+class GlobalSetup
+{
+public:
+    static GlobalSetup & Instance()
+    {
+        static GlobalSetup setup;
+        return setup;
+    }
+
+    void setFileName(const QString & arg) {mFileName = arg;}
+    void setDefaultFont(QWidget * parent) {mDefaultFont = parent->font();}
+    void setDisplayMilliSeconds(bool arg) {mDisplayMilliSeconds = arg;}
+    //void setByteOrder(ByteOrderMode arg) {mByteOrder = arg;}
+    void setByteOrder(ByteOrderMode arg) {mByteOrder = arg;qDebug() << "XXXXXXXXXXXXXXXXX:" << byteOrderString();}
+
+    const QString & fileName() const {return mFileName;}
+    const QFont & defaultFont() const {return mDefaultFont;}
+    bool displayMilliSeconds() const {return mDisplayMilliSeconds;}
+    ByteOrderMode byteOrder() const {return mByteOrder;}
+    QString byteOrderString() const
+    {
+        switch (byteOrder())
+        {
+        default:
+        case AutoByteOrder: return "AutoByteOrder";
+        case KeepByteOrder: return "KeepByteOrder";
+        case SwapByteOrder: return "SwapByteOrder";
+        }
+    }
+private:
+    GlobalSetup():
+        mFileName(),
+        mDefaultFont(),
+        mByteOrder(AutoByteOrder),
+        mDisplayMilliSeconds(false)
+    {
+    }
+private:
+    QString mFileName;
+    QFont mDefaultFont;
+    ByteOrderMode mByteOrder;
+    bool mDisplayMilliSeconds;
+};
+
+////////////////////////////////////////////////////////////////////////////////
 // MeasurePerformance
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -231,7 +286,7 @@ private:
     int mSampleOffset;
     bool mIsSigned;
     bool mIsBigEndian;
-    bool mIsAutoDetectByteOrder;
+    ByteOrderMode mByteOrderMode;
 public:
     DataFile & operator=(const DataFile &) = default;
     DataFile(const DataFile &) = default;
@@ -253,7 +308,7 @@ public:
         mSampleOffset(0),
         mIsSigned(true),
         mIsBigEndian(true),
-        mIsAutoDetectByteOrder(true)
+        mByteOrderMode(GlobalSetup::Instance().byteOrder())
     {
         parseInfo();
         readData();
@@ -428,10 +483,10 @@ private:
     void readData()
     {
         readData(mSamples, mIsBigEndian);
-        if (mIsAutoDetectByteOrder) autoDetectByteOrder();
+        if (mByteOrderMode == AutoByteOrder) autoByteOrder();
     }
 
-    void autoDetectByteOrder()
+    void autoByteOrder()
     {
         std::vector<int> swap;
         readData(swap, !mIsBigEndian);
@@ -553,11 +608,22 @@ private:
         if (parser.tag("u16"))   {mIsSigned = false;}
         if (parser.tag("i16"))   {mIsSigned = true;}
 
+        bool keep = false;
         // Hint: Use these keywords instead: They fully describe the data.
-        if (parser.tag("beu16")) {mIsAutoDetectByteOrder = false; mIsSigned = false; mIsBigEndian = true;}
-        if (parser.tag("leu16")) {mIsAutoDetectByteOrder = false; mIsSigned = false; mIsBigEndian = false;}
-        if (parser.tag("bei16")) {mIsAutoDetectByteOrder = false; mIsSigned = true;  mIsBigEndian = true;}
-        if (parser.tag("lei16")) {mIsAutoDetectByteOrder = false; mIsSigned = true;  mIsBigEndian = false;}
+        if (parser.tag("beu16")) {keep = true; mIsSigned = false; mIsBigEndian = true;}
+        if (parser.tag("leu16")) {keep = true; mIsSigned = false; mIsBigEndian = false;}
+        if (parser.tag("bei16")) {keep = true; mIsSigned = true;  mIsBigEndian = true;}
+        if (parser.tag("lei16")) {keep = true; mIsSigned = true;  mIsBigEndian = false;}
+
+        if (keep)
+        {
+            // neither swapping nor auto-detecting
+            mByteOrderMode = KeepByteOrder;
+        }
+        else if (mByteOrderMode == SwapByteOrder)
+        {
+            mIsBigEndian = !mIsBigEndian;
+        }
 
         mInterleave.parse(parser.remaining());
     }
@@ -1015,39 +1081,6 @@ public:
     {
         return unitToYpx(mGain * lsb);
     }
-};
-
-////////////////////////////////////////////////////////////////////////////////
-// GlobalSetup
-////////////////////////////////////////////////////////////////////////////////
-
-class GlobalSetup
-{
-public:
-    static GlobalSetup & Instance()
-    {
-        static GlobalSetup setup;
-        return setup;
-    }
-
-    void setFileName(const QString & arg) {mFileName = arg;}
-    void setDefaultFont(QWidget * parent) {mDefaultFont = parent->font();}
-    void setDisplayMilliSeconds(bool arg) {mDisplayMilliSeconds = arg;}
-
-    const QString & fileName() const {return mFileName;}
-    const QFont & defaultFont() const {return mDefaultFont;}
-    bool displayMilliSeconds() const {return mDisplayMilliSeconds;}
-private:
-    GlobalSetup():
-        mFileName(),
-        mDefaultFont(),
-        mDisplayMilliSeconds(false)
-    {
-    }
-private:
-    QString mFileName;
-    QFont mDefaultFont;
-    bool mDisplayMilliSeconds;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1796,6 +1829,11 @@ public:
         statusFocus();
     }
 
+    void showStatus(const QString & msg)
+    {
+        if (mStatus) {mStatus->showMessage(msg);}
+    }
+
     void xzoomIn()  {for (auto & chan:mChannels) {chan->xzoomIn(); }; statusZoom();}
     void xzoomOut() {for (auto & chan:mChannels) {chan->xzoomOut();}; statusZoom();}
     void left()     {for (auto & chan:mChannels) {chan->left();    }; statusTime();}
@@ -1823,21 +1861,21 @@ private:
     {
         statusFocus();
         if (!mSelected) return;
-        mStatus->showMessage(mSelected->timeString());
+        showStatus(mSelected->timeString());
     }
 
     void statusValue()
     {
         statusFocus();
         if (!mSelected) return;
-        mStatus->showMessage(mSelected->valueString());
+        showStatus(mSelected->valueString());
     }
 
     void statusZoom()
     {
         statusFocus();
         if (!mSelected) return;
-        mStatus->showMessage(mSelected->zoomString());
+        showStatus(mSelected->zoomString());
     }
 
     void statusFocus()
@@ -1931,6 +1969,20 @@ private slots:
     void measureRight() {if (mGui) {mGui->measureRight();}}
     void measureUp()    {if (mGui) {mGui->measureUp();}}
     void measureDown()  {if (mGui) {mGui->measureDown();}}
+    void toggleByteOrder()
+    {
+        if (!mGui) return;
+        GlobalSetup & gs = GlobalSetup::Instance();
+        switch (gs.byteOrder())
+        {
+        default:
+        case AutoByteOrder: gs.setByteOrder(KeepByteOrder); break;
+        case KeepByteOrder: gs.setByteOrder(SwapByteOrder); break;
+        case SwapByteOrder: gs.setByteOrder(AutoByteOrder); break;
+        }
+        Reload();
+        mGui->showStatus(gs.byteOrderString());
+    }
     void toggleTime()
     {
         if (!mGui) return;
@@ -1975,6 +2027,7 @@ public:
         QMenu * fileMenu = menuBar()->addMenu(tr("&File"));
         ACTION(fileMenu, "&Open...", Open, QKeySequence::Open);
         ACTION(fileMenu, "&Reload", Reload, Qt::Key_R);
+        ACTION(fileMenu, "&ByteOrder", toggleByteOrder, Qt::Key_B);
         ACTION(fileMenu, "&Vim", vim, Qt::Key_V);
         ACTION(fileMenu, "&Exit", Exit, QKeySequence::Quit);
 
