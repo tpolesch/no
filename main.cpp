@@ -231,7 +231,7 @@ private:
     int mSampleOffset;
     bool mIsSigned;
     bool mIsBigEndian;
-    const bool mIsAutoDetectByteOrder;
+    bool mIsAutoDetectByteOrder;
 public:
     DataFile & operator=(const DataFile &) = default;
     DataFile(const DataFile &) = default;
@@ -554,10 +554,10 @@ private:
         if (parser.tag("i16"))   {mIsSigned = true;}
 
         // Hint: Use these keywords instead: They fully describe the data.
-        if (parser.tag("beu16")) {mIsSigned = false; mIsBigEndian = true;}
-        if (parser.tag("leu16")) {mIsSigned = false; mIsBigEndian = false;}
-        if (parser.tag("bei16")) {mIsSigned = true;  mIsBigEndian = true;}
-        if (parser.tag("lei16")) {mIsSigned = true;  mIsBigEndian = false;}
+        if (parser.tag("beu16")) {mIsAutoDetectByteOrder = false; mIsSigned = false; mIsBigEndian = true;}
+        if (parser.tag("leu16")) {mIsAutoDetectByteOrder = false; mIsSigned = false; mIsBigEndian = false;}
+        if (parser.tag("bei16")) {mIsAutoDetectByteOrder = false; mIsSigned = true;  mIsBigEndian = true;}
+        if (parser.tag("lei16")) {mIsAutoDetectByteOrder = false; mIsSigned = true;  mIsBigEndian = false;}
 
         mInterleave.parse(parser.remaining());
     }
