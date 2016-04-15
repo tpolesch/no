@@ -41,17 +41,20 @@ public:
     void setFileName(const QString & arg) {mFileName = arg;}
     void setDefaultFont(QWidget * parent) {mDefaultFont = parent->font();}
     void setDisplayMilliSeconds(bool arg) {mDisplayMilliSeconds = arg;}
+    void setDebug(bool arg) {mDebug = arg;}
     void setByteOrder(ByteOrderMode arg) {mByteOrder = arg;}
 
     const QString & fileName() const {return mFileName;}
     const QFont & defaultFont() const {return mDefaultFont;}
     bool displayMilliSeconds() const {return mDisplayMilliSeconds;}
+    bool debug() const {return mDebug;}
     ByteOrderMode byteOrder() const {return mByteOrder;}
 private:
     GlobalSetup():
         mFileName(),
         mDefaultFont(),
         mByteOrder(AutoByteOrder),
+        mDebug(false),
         mDisplayMilliSeconds(false)
     {
     }
@@ -59,6 +62,7 @@ private:
     QString mFileName;
     QFont mDefaultFont;
     ByteOrderMode mByteOrder;
+    bool mDebug;
     bool mDisplayMilliSeconds;
 };
 
@@ -483,6 +487,7 @@ private:
 
     void debug() const
     {
+        if (!GlobalSetup::Instance().debug()) return;
         QTextStream out(stdout);
         const QString bo = mIsBigEndian
             ? (mIsSigned ? "bei16" : "beu16")
@@ -491,6 +496,7 @@ private:
         out << "|" << bo;
         out << "|mask=0x" << hex << mSampleMask;
         out << "|offset=0x" << hex << mSampleOffset;
+        out << "|delay=" << dec << mDelay;
         out << endl;
     }
 
@@ -2000,6 +2006,12 @@ private slots:
         Reload();
         mGui->showStatus(toString(gs.byteOrder()));
     }
+    void toggleDebug()
+    {
+        const bool dbg = !GlobalSetup::Instance().debug();
+        GlobalSetup::Instance().setDebug(dbg);
+        if (mGui) {mGui->showStatus(dbg ? "Debug:On" : "Debug:Off");}
+    }
     void toggleTime()
     {
         if (!mGui) return;
@@ -2046,6 +2058,7 @@ public:
         ACTION(fileMenu, "&Open...", Open, QKeySequence::Open);
         ACTION(fileMenu, "&Reload", Reload, Qt::Key_R);
         ACTION(fileMenu, "&ByteOrder", toggleByteOrder, Qt::Key_B);
+        ACTION(fileMenu, "&Debug", toggleDebug, Qt::Key_D);
         ACTION(fileMenu, "&Vim", vim, Qt::Key_V);
         ACTION(fileMenu, "&Exit", Exit, QKeySequence::Quit);
 
