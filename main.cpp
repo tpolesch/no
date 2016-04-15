@@ -18,6 +18,17 @@ enum ByteOrderMode
     SwapByteOrder
 };
 
+static QString toString(ByteOrderMode mode)
+{
+    switch (mode)
+    {
+    default:
+    case AutoByteOrder: return "AutoByteOrder";
+    case KeepByteOrder: return "KeepByteOrder";
+    case SwapByteOrder: return "SwapByteOrder";
+    }
+}
+
 class GlobalSetup
 {
 public:
@@ -30,23 +41,12 @@ public:
     void setFileName(const QString & arg) {mFileName = arg;}
     void setDefaultFont(QWidget * parent) {mDefaultFont = parent->font();}
     void setDisplayMilliSeconds(bool arg) {mDisplayMilliSeconds = arg;}
-    //void setByteOrder(ByteOrderMode arg) {mByteOrder = arg;}
-    void setByteOrder(ByteOrderMode arg) {mByteOrder = arg;qDebug() << "XXXXXXXXXXXXXXXXX:" << byteOrderString();}
+    void setByteOrder(ByteOrderMode arg) {mByteOrder = arg;}
 
     const QString & fileName() const {return mFileName;}
     const QFont & defaultFont() const {return mDefaultFont;}
     bool displayMilliSeconds() const {return mDisplayMilliSeconds;}
     ByteOrderMode byteOrder() const {return mByteOrder;}
-    QString byteOrderString() const
-    {
-        switch (byteOrder())
-        {
-        default:
-        case AutoByteOrder: return "AutoByteOrder";
-        case KeepByteOrder: return "KeepByteOrder";
-        case SwapByteOrder: return "SwapByteOrder";
-        }
-    }
 private:
     GlobalSetup():
         mFileName(),
@@ -313,6 +313,7 @@ public:
         parseInfo();
         readData();
         readAnno();
+        debug();
     }
 
     int sampleMask() const
@@ -480,6 +481,19 @@ private:
         read.close();
     }
 
+    void debug() const
+    {
+        QTextStream out(stdout);
+        const QString bo = mIsBigEndian
+            ? (mIsSigned ? "bei16" : "beu16")
+            : (mIsSigned ? "lei16" : "leu16");
+        out << mLabel;
+        out << "|" << bo;
+        out << "|mask=0x" << hex << mSampleMask;
+        out << "|offset=0x" << hex << mSampleOffset;
+        out << endl;
+    }
+
     void readData()
     {
         readData(mSamples, mIsBigEndian);
@@ -514,7 +528,8 @@ private:
 
         if (compare > 0)
         {
-            qDebug() << "autoDetectByteOrder: swap" << mData;
+            qDebug() << "autoByteOrder: swap" << mData;
+            mIsBigEndian = !mIsBigEndian;
             mSamples = swap;
         }
     }
@@ -604,7 +619,7 @@ private:
         }
 
         // Hint: Avoid these keywords. They describe only a part of the data.
-        if (parser.tag("swab"))  {mIsBigEndian = false;}
+        if (parser.tag("swab"))  {mIsBigEndian = !mIsBigEndian;}
         if (parser.tag("u16"))   {mIsSigned = false;}
         if (parser.tag("i16"))   {mIsSigned = true;}
 
@@ -1243,14 +1258,16 @@ private:
 
 static QString FormatTime(double seconds)
 {
-    int64_t ms = static_cast<int64_t>(std::abs(1000.0 * seconds));
+    int64_t us = static_cast<int64_t>(std::round(std::abs(1e6 * seconds)));
+    int64_t ms = us / 1e3;
+    us -= ms * 1e3;
+    auto msstr = [](int64_t mst, int64_t ust) {
+        return QString("%1.%2ms").arg(mst).arg(ust, 3, 10, QChar('0'));
+    };
 
     if (GlobalSetup::Instance().displayMilliSeconds())
     {
-        QString result;
-        QTextStream s(&result);
-        s << ms << "ms";
-        return result;
+        return msstr(ms, us);
     }
 
     int64_t factor = 1000 * 60 * 60;
@@ -1268,7 +1285,7 @@ static QString FormatTime(double seconds)
     if (hour != 0) s << hour << "h";
     if ( min != 0) s << min  << "m";
     if ( sec != 0) s << sec  << "s";
-    if (  ms != 0) s << ms   << "ms";
+    s << msstr(ms, us);
     return result;
 }
 
@@ -1981,7 +1998,7 @@ private slots:
         case SwapByteOrder: gs.setByteOrder(AutoByteOrder); break;
         }
         Reload();
-        mGui->showStatus(gs.byteOrderString());
+        mGui->showStatus(toString(gs.byteOrder()));
     }
     void toggleTime()
     {
@@ -1989,6 +2006,7 @@ private slots:
         GlobalSetup & gs = GlobalSetup::Instance();
         gs.setDisplayMilliSeconds(!gs.displayMilliSeconds());
         mGui->refresh();
+        mGui->showStatus(gs.displayMilliSeconds() ? "Time/ms" : "Time/0h0m0s0.000ms");
     }
     void toggleFont()
     {
@@ -1996,9 +2014,9 @@ private slots:
         QFont normal = GlobalSetup::Instance().defaultFont();
         QFont small(normal);
         small.setPixelSize(9);
-        mGui->setFont((mGui->font().pixelSize() != small.pixelSize())
-                ? small
-                : normal);
+        const bool useSmall = mGui->font().pixelSize() != small.pixelSize();
+        mGui->setFont(useSmall ? small : normal);
+        mGui->showStatus(useSmall ? "Font:Small" : "Font:Normal");
     }
     void vim()
     {
@@ -2120,14 +2138,17 @@ int main(int argc, char * argv[])
 
 TEST(FormatTime, FormatTime)
 {
-    double time = 0.456;
-    EXPECT_EQ("456ms", FormatTime(time));
+    double time = 0.456001;
+    EXPECT_EQ("456.001ms", FormatTime(time));
     time += 3.0;
-    EXPECT_EQ("3s456ms", FormatTime(time));
+    EXPECT_EQ("3s456.001ms", FormatTime(time));
     time += 2 * 60;
-    EXPECT_EQ("2m3s456ms", FormatTime(time));
+    EXPECT_EQ("2m3s456.001ms", FormatTime(time));
     time += 60 * 60;
-    EXPECT_EQ("1h2m3s456ms", FormatTime(time));
+    EXPECT_EQ("1h2m3s456.001ms", FormatTime(time));
+    
+    EXPECT_EQ("123.456ms", FormatTime(0.1234564));
+    EXPECT_EQ("123.457ms", FormatTime(0.1234566));
 }
 
 TEST(InfoParser, value)
