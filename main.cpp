@@ -1298,6 +1298,7 @@ static QString FormatTime(double seconds)
         
     QString result;
     QTextStream s(&result);
+    if (seconds < 0) s << "-";
     if (hour != 0) s << hour << "h";
     if ( min != 0) s << min  << "m";
     if ( sec != 0) s << sec  << "s";
