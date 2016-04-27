@@ -116,6 +116,7 @@ public:
     {
     }
 
+    void addDelay(Second sec) {mSec += sec;}
     Second sec() const {return mSec;}
     const QString & txt() const {return mTxt;}
 };
@@ -696,7 +697,9 @@ public:
 
             for (auto & anno:file.annotations())
             {
-                mMergedAnnotations.push_back({anno, index});
+                MergedAnnotation ma{anno, index};
+                ma.annotation.addDelay(file.delay());
+                mMergedAnnotations.push_back(ma);
             }
 
             ++index;
@@ -1046,6 +1049,13 @@ public:
             << "spp:" << samplesPerPixel();
     }
 
+    void resetData()
+    {
+        mGain = 0;
+        mSps = 0;
+        mDelay = 0;
+    }
+
     void setData(const DataFile & data)
     {
         mGain = data.gain();
@@ -1335,6 +1345,7 @@ DrawChannel::DrawChannel(QWidget & parent,
         }
     }
 
+    mTranslate.resetData();
     DrawAnnotations(chan);
     DrawDecorations(chan);
     DrawRulers();

@@ -1,4 +1,6 @@
 wave.dat 500 1 mV "A" gain=0.005 offset=8192 s-mask=0x3fff anno_file=wave.anno
+wave.dat 500 1 mV "B" gain=0.003 offset=8092 s-mask=0x3fff delay=4500 anno_file=wave.anno
+wave.dat 500 1 mV "A" gain=0.005 offset=8192 s-mask=0x3fff anno_file=wave.anno
 +wave.dat 500 1 mV "B" gain=0.003 offset=8092 s-mask=0x3fff delay=4500 anno_file=wave.anno
 wave.dat 500 1 mV "A" gain=0.005 offset=8192 s-mask=0x3fff anno_file=wave.anno
 -wave.dat 500 1 mV "B" gain=0.003 offset=8092 s-mask=0x3fff delay=4500 anno_file=wave.anno
