@@ -1331,7 +1331,7 @@ DrawChannel::DrawChannel(QWidget & parent,
     {
         SetColorSchema(dataIndex++);
         mTranslate.setData(data);
-        mTranslate.debug(rect);
+        //mTranslate.debug(rect);
 
         if (data.samples().size() > 1)
         {
@@ -1431,8 +1431,6 @@ void DrawChannel::DrawAnnotations(const DataChannel & chan)
         if (textLeft > requestRight) return;
         QRect bounds(textLeft, lastBounds.top(), max, max);
         bounds = mPainter.boundingRect(bounds, flags, anno.txt());
-        if (bounds.right() < requestLeft) continue;
-
         const bool isOverlapping = bounds.left() < lastBounds.right();
 
         if (isOverlapping)
@@ -1445,9 +1443,10 @@ void DrawChannel::DrawAnnotations(const DataChannel & chan)
             }
         }
 
+        lastBounds = bounds;
+        if (bounds.right() < requestLeft) continue;
         mPainter.drawText(bounds.bottomLeft(), anno.txt());
         mPainter.drawLine(bounds.bottomLeft(), QPoint(bounds.left(), bottom));
-        lastBounds = bounds;
     }
 }
 
