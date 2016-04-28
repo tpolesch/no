@@ -973,12 +973,12 @@ public:
 
     void scrollLeft()
     {
-        scroll(-unitSize() / 4);
+        scroll((-3 * unitSize()) / 4);
     }
 
     void scrollRight()
     {
-        scroll(unitSize() / 4);
+        scroll((3 * unitSize()) / 4);
     }
 
     void scroll(double unit)
