@@ -973,12 +973,12 @@ public:
 
     void scrollLeft()
     {
-        scroll((-3 * unitSize()) / 4);
+        scroll((-1 * unitSize()) / 4);
     }
 
     void scrollRight()
     {
-        scroll((3 * unitSize()) / 4);
+        scroll((1 * unitSize()) / 4);
     }
 
     void scroll(double unit)
@@ -1780,14 +1780,8 @@ private:
 
     void resizeEvent(QResizeEvent *) override
     {
-        qDebug() << "GuiWave::resizeEvent" << width() << "X" << height() << mResizeCounter;
         mValueScale.setPixelSize(height());
-        if ((mResizeCounter < 100) && (++mResizeCounter < 2))
-        {
-            // 1st resize is an internal event.
-            // following resize events should not touch the time scaling
-            mTimeScale.setPixelSize(width());
-        }
+        mTimeScale.setPixelSize(width());
         update();
     }
     
