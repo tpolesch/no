@@ -1325,6 +1325,7 @@ DrawChannel::DrawChannel(QWidget & parent,
 {
     mPainter.setRenderHint(QPainter::Antialiasing, true);
     mPainter.fillRect(mRect, Qt::white);
+    DrawAnnotations(chan);
 
     size_t dataIndex = 0;
     for (auto & data:chan.files())
@@ -1347,7 +1348,6 @@ DrawChannel::DrawChannel(QWidget & parent,
     }
 
     mTranslate.resetData();
-    DrawAnnotations(chan);
     DrawDecorations(chan);
     DrawRulers();
     DrawRange();
@@ -1412,13 +1412,14 @@ void DrawChannel::DrawRulers()
 
 void DrawChannel::DrawAnnotations(const DataChannel & chan)
 {
-
     const int flags = Qt::TextSingleLine|Qt::TextDontClip;
     const int requestLeft = mRect.left();
     const int requestRight = mRect.right();
     const int max = INT_MAX;
     QRect lastBounds(INT_MIN, 0, 0, 0);
     const int bottom = mParent.rect().bottom();
+    int annosPerPixel = 0;
+    int annosDisplayed = 0;
 
     for (auto & merged:chan.mergedAnnotations())
     {
@@ -1443,10 +1444,21 @@ void DrawChannel::DrawAnnotations(const DataChannel & chan)
             }
         }
 
+        if (lastBounds.x() == bounds.x())
+        {
+            ++annosPerPixel;
+        }
+        else
+        {
+            annosPerPixel = 0;
+        }
+
         lastBounds = bounds;
         if (bounds.right() < requestLeft) continue;
+        if ((annosPerPixel > 1) && (annosDisplayed > 1000)) continue;
         mPainter.drawText(bounds.bottomLeft(), anno.txt());
         mPainter.drawLine(bounds.bottomLeft(), QPoint(bounds.left(), bottom));
+        ++annosDisplayed;
     }
 }
 
