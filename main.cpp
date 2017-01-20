@@ -396,8 +396,8 @@ public:
         {
             double a = at(time);
             double b = other.at(time);
-            if (isnan(a)) {a = 0;}
-            if (isnan(b)) {b = 0;}
+            if (std::isnan(a)) {a = 0;}
+            if (std::isnan(b)) {b = 0;}
             const int lsb = static_cast<int>((a - b) / gain());
             result.push_back(lsb);
             ++index;
