@@ -112,7 +112,7 @@ private:
 public:
     explicit Annotation(double msec, const QString & txt):
         mSec(msec / 1000.0),
-        mTxt(txt)
+        mTxt(txt.simplified())
     {
     }
 
@@ -454,7 +454,8 @@ private:
     void readAnno()
     {
         if (mAnno.size() < 1) return;
-        const QString name = mPath + mAnno;
+        const bool isAbsPath = mAnno.startsWith('/');
+        const QString name = (isAbsPath ? mAnno : (mPath + mAnno));
         QFile read(name);
 
         if (!read.open(QIODevice::ReadOnly))
@@ -1442,6 +1443,10 @@ void DrawChannel::DrawAnnotations(const DataChannel & chan)
             {
                 bounds.moveTop(0);
             }
+        }
+        else
+        {
+            bounds.moveTop(0);
         }
 
         if (lastBounds.x() == bounds.x())
