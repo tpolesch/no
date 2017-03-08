@@ -285,8 +285,8 @@ private:
     QString mOper;
     QString mUnit;
     QString mLabel;
+    QString mError;
     Interleave mInterleave;
-    int mErrors;
     int mSampleMask;
     int mSampleOffset;
     bool mIsSigned;
@@ -308,7 +308,7 @@ public:
         mOper(),
         mUnit(),
         mLabel(),
-        mErrors(0),
+        mError(),
         mSampleMask(0xffff),
         mSampleOffset(0),
         mIsSigned(true),
@@ -363,7 +363,12 @@ public:
 
     bool valid() const
     {
-        return (mErrors == 0);
+        return (error().size() == 0);
+    }
+
+    const QString & error() const
+    {
+        return mError;
     }
 
     const QString & txt() const
@@ -460,7 +465,7 @@ private:
 
         if (!read.open(QIODevice::ReadOnly))
         {
-            error();
+            error("anno file missing: " + name);
             return;
         }
 
@@ -550,16 +555,16 @@ private:
         if (mData == "dummy") return;
         if (mData.size() < 1) return;
         const bool isAbsPath = mData.startsWith('/');
-        const QString fullName = (isAbsPath ? (mData) : (mPath + mData));
-        QFile read(fullName);
+        const QString name = (isAbsPath ? (mData) : (mPath + mData));
+        QFile read(name);
 
         if (!read.open(QIODevice::ReadOnly))
         {
-            error();
+            error("data file missing: " + name);
             return;
         }
 
-        const size_t size = static_cast<size_t>(QFileInfo(fullName).size());
+        const size_t size = static_cast<size_t>(QFileInfo(name).size());
         dst.reserve(size / sizeof(qint16));
         QDataStream stream(&read);
         stream.setByteOrder(isBigEndian ? QDataStream::BigEndian : QDataStream::LittleEndian);
@@ -593,29 +598,46 @@ private:
         read.close();
     }
 
+    void error(const QString & tag)
+    {
+        QTextStream(&mError) << tag << endl;
+    }
+
+    double toDouble(const QString & src, const QString & tag)
+    {
+        bool done = true;
+        const double result = src.toDouble(&done);
+        if (done) return result;
+        error(tag);
+        return 1;
+    }
+
+    int toInt(int base, const QString & src, const QString & tag)
+    {
+        bool done = true;
+        const int result = src.toInt(&done, base);
+        if (done) return result;
+        error(tag);
+        return 1;
+    }
+
     void parseInfo()
     {
         InfoParser parser(mTxt);
         mOper = parser.oper();
         mData = parser.pop();
-        const QString txtSps = parser.pop();
-        bool done = true;
-        mSps  = txtSps.toDouble(&done);
-        if (!done) error();
-        const QString txtDiv = parser.pop();
+        mSps  = toDouble(parser.pop(), "SampleFrequency");
         double gainDividend = 1.0;
-        const double gainDivisor = txtDiv.toDouble(&done);
-        if (!done) error();
+        const double gainDivisor = toDouble(parser.pop(), "Divider");
         mUnit = parser.pop();
         mLabel = parser.unquoted(parser.pop());
 
         QString dst;
-        if (done && parser.value(dst, "anno_file")) {mAnno = dst;}
-        if (done && parser.value(dst, "s-mask")) {mSampleMask = dst.toInt(&done, 16);}
-        if (done && parser.value(dst, "offset")) {mSampleOffset = dst.toInt(&done, 0);}
-        if (done && parser.value(dst, "delay")) {mDelay = dst.toDouble(&done) / 1000.0;}
-        if (done && parser.value(dst, "gain")) {gainDividend = dst.toDouble(&done);}
-        if (!done) {error();}
+        if (parser.value(dst, "anno_file")) {mAnno = dst;}
+        if (parser.value(dst, "s-mask"))    {mSampleMask = toInt(16, dst, "s-mask");}
+        if (parser.value(dst, "offset"))    {mSampleOffset = toInt(0, dst, "offset");}
+        if (parser.value(dst, "delay"))     {mDelay = toDouble(dst, "delay") / 1000.0;}
+        if (parser.value(dst, "gain"))      {gainDividend = toDouble(dst, "gain");}
 
         mGain = gainDividend / gainDivisor;
 
@@ -649,11 +671,6 @@ private:
         }
 
         mInterleave.parse(parser.remaining());
-    }
-
-    void error()
-    {
-        ++mErrors;
     }
 };
 
@@ -753,18 +770,19 @@ class DataMain
 private:
     std::vector<DataChannel> mChannels;
     Second mDuration;
-    bool mIsValid;
+    QString mError;
 public:
     explicit DataMain(const QString & infoName):
         mChannels(),
         mDuration(0),
-        mIsValid(false)
+        mError()
     {
         MeasurePerformance measure("DataMain::ctor");
         QFile info(infoName);
 
         if (!info.open(QIODevice::ReadOnly))
         {
+            error("info file missing: " + infoName);
             return;
         }
 
@@ -788,14 +806,16 @@ public:
                 continue;
             }
 
-            fileList.push_back(DataFile(line, path));
+            const DataFile file(line, path);
+            fileList.push_back(file);
         }
         
         for (auto & file:fileList)
         {
             if (!file.valid())
             {
-                qDebug() << "Could not parse:" << file.txt();
+                error("invalid line: " + file.txt());
+                error(file.error());
                 continue;
             }
                 
@@ -804,7 +824,6 @@ public:
             if (file.isOperator("-")) minus(file);
         }
 
-        mIsValid = (channels().size() > 0);
         mDuration = 0;
         
         for (auto & chan:mChannels)
@@ -814,14 +833,20 @@ public:
         }
     }
     
-    bool valid() const {return mIsValid;}
+    bool valid() const {return error().size() == 0;}
     Second duration() const {return mDuration;}
+    const QString & error() const {return mError;}
 
     const std::vector<DataChannel> & channels() const
     {
        return mChannels;
     }
 private:
+    void error(const QString & add)
+    {
+        QTextStream(&mError) << add << endl;
+    }
+
     void create(DataFile & file)
     {
         DataChannel data;
@@ -2125,7 +2150,7 @@ public:
         }
         else
         {
-            QMessageBox::information(0, "error", "Could not parse " + name);
+            QMessageBox::information(0, "Error", mData->error());
         }
 
         setCentralWidget(mGui);
