@@ -287,6 +287,7 @@ private:
     QString mLabel;
     QString mError;
     Interleave mInterleave;
+    int mLineNumber;
     int mSampleMask;
     int mSampleOffset;
     bool mIsSigned;
@@ -296,7 +297,7 @@ public:
     DataFile & operator=(const DataFile &) = default;
     DataFile(const DataFile &) = default;
     DataFile() = delete;
-    explicit DataFile(const QString & txt, const QString & path = ""):
+    explicit DataFile(const QString & txt, const QString & path = "", int line = -1):
         mSamples(),
         mDelay(0.0),
         mSps(0.0),
@@ -309,6 +310,7 @@ public:
         mUnit(),
         mLabel(),
         mError(),
+        mLineNumber(line),
         mSampleMask(0xffff),
         mSampleOffset(0),
         mIsSigned(true),
@@ -319,6 +321,11 @@ public:
         readData();
         readAnno();
         debug();
+    }
+
+    int lineNumber() const
+    {
+        return mLineNumber;
     }
 
     int sampleMask() const
@@ -789,10 +796,12 @@ public:
         const QString path = QFileInfo(info).path() + "/";
         QTextStream in(&info);
         std::vector<DataFile> fileList;
+        int lineNumber = 0;
 
         while (!in.atEnd())
         {
             const QString line = in.readLine();
+            ++lineNumber;
 
             if (QRegularExpression("^#").match(line).hasMatch())
             {
@@ -806,7 +815,7 @@ public:
                 continue;
             }
 
-            const DataFile file(line, path);
+            const DataFile file(line, path, lineNumber);
             fileList.push_back(file);
         }
         
@@ -814,7 +823,9 @@ public:
         {
             if (!file.valid())
             {
-                error("invalid line: " + file.txt());
+                QString txt;
+                QTextStream(&txt) << "line " << file.lineNumber() << ": " << file.txt();
+                error(txt);
                 error(file.error());
                 continue;
             }
@@ -2143,18 +2154,11 @@ public:
         mData = nullptr;
         GlobalSetup::Instance().setFileName(name);
         mData = new DataMain(name);
-
-        if (mData->valid())
-        {
-            mGui = new GuiMain(this, *mData);
-        }
-        else
-        {
-            QMessageBox::information(0, "Error", mData->error());
-        }
-
+        mGui = new GuiMain(this, *mData);
         setCentralWidget(mGui);
         setWindowTitle(name);
+        if (mData->valid()) return;
+        QMessageBox::information(0, "Error", mData->error());
     }
 };
 
@@ -2182,13 +2186,13 @@ int main(int argc, char * argv[])
     }
 
     MainWindow win;
+    win.show();
 
     if (arguments.Files().size() > 0)
     {
         win.Open(arguments.Files()[0]);
     }
 
-    win.show();
     return app.exec();
 }
 
